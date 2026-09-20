@@ -1,0 +1,130 @@
+# ==============================================================================
+# TS Skleníky - .gitignore
+# ==============================================================================
+
+# --- Citlivá data a přihlašovací údaje (Credentials & Secrets) ---
+credentials.json
+client_secret*.json
+token.json
+smtp_config.ini
+app/credentials.json
+app/client_secret*.json
+app/token.json
+app/smtp_config.ini
+app/dist/credentials.json
+app/dist/client_secret*.json
+app/dist/token.json
+app/dist/smtp_config.ini
+*.pem
+*.key
+.env
+.env.*
+!.env.example
+
+# --- Konfigurace zálohování (ponechat pouze šablonu) ---
+backup_config.ini
+app/backup_config.ini
+app/dist/backup_config.ini
+
+# --- Databáze a data (FoxPro DBF/CDX/FPT, SQLite) ---
+app/DATA/*
+!app/DATA/.gitkeep
+DATA/*
+!DATA/.gitkeep
+dist/DATA/
+app/dist/DATA/
+*.db
+*.sqlite
+*.sqlite3
+*.DBF
+*.dbf
+*.CDX
+*.cdx
+*.FPT
+*.fpt
+*.BAK
+*.bak
+*.DBC
+*.dbc
+*.DCT
+*.dct
+*.DCX
+*.dcx
+*.TBK
+*.tbk
+
+# --- Zálohy a archivy (Backups & Archives) ---
+app/Zaloha/*
+!app/Zaloha/.gitkeep
+Zaloha/*
+!Zaloha/.gitkeep
+dist/Zaloha/
+app/dist/Zaloha/
+*.zip
+*.tar
+*.gz
+*.rar
+*.7z
+_last_backup.txt
+app/_last_backup.txt
+app/dist/_last_backup.txt
+
+# --- PyInstaller / Sestavení aplikace (Build Artifacts) ---
+dist/
+build/
+app/dist/
+app/build/
+*.spec
+*.exe
+*.dll
+*.so
+*.dylib
+*.bin
+
+# --- Python & Bytecode ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.installed.cfg
+*.egg
+
+# --- Virtuální prostředí (Virtual Environments) ---
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# --- IDE & Editory ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# --- Systémové soubory ---
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+.Spotlight-V100
+.Trashes
+
+# --- Logy, chybová hlášení a dočasné soubory ---
+*.log
+crash.log
+app/crash.log
+app/dist/crash.log
+crash_log.txt
+app/crash_log.txt
+dump.txt
+dump_*.txt
+file_list.json
+scratch/
+scratch.txt
+*.tmp

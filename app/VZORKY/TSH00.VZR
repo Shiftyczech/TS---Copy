@@ -1,0 +1,68 @@
+<HTML>
+<HEAD>
+<TITLE>
+</TITLE>
+</HEAD>
+<BODY BGCOLOR="#A0FFA0">
+<FONT - "Times New Roman">
+<TABLE ALIGN="LEFT" COLS=1 BORDER=0>
+<TR><TD>
+<TABLE ALIGN="LEFT" COLS=1 BORDERCOLOR="black" BORDER=1 BGCOLOR="white">
+<TR><TD>
+<TABLE ALIGN="LEFT" BGCOLOR="white" CELLPADDING=2 CELLSPACING=2 COLS=3 BORDER=0 RULES="NONE">
+<TR ALIGN="LEFT" VALIGN="BOTTOM">
+<TD WIDTH=260 HEIGHT=40 VALIGN="BOTTOM"><B>Dodavatel:</B></TD>
+<TD WIDTH=42>&nbsp</TD>
+<TD WIDTH=276 HEIGHT=10 VALIGN="TOP" ROWSPAN=2><FONT SIZE=6><B>Objednávka&nbsp«Cislo_Obj»</B></FONT></TD>
+</TR>
+<TR ALIGN="LEFT">
+<TD COLSPAN=2>&nbsp</TD>
+</TR>
+<TR ALIGN="LEFT">
+<TD COLSPAN=2>«D_Nazev1»</TD>
+<TD WIDTH=40>&nbsp</TD>
+</TR>
+<TR ALIGN="LEFT">
+<TD COLSPAN=2>«D_Nazev2»</TD>
+<TD>&nbsp</TD>
+</TR>
+<TR ALIGN="LEFT">
+<TD COLSPAN=2>«D_Ulice»</TD>
+<TD><B>«O_Jmeno»</B></TD>
+</TR>
+<TR ALIGN="LEFT">
+<TD COLSPAN=2>«D_PSC»&nbsp&nbsp«D_Obec»</TD>
+<TD><B>«O_Ulice»</B></TD>
+</TR>
+<TR ALIGN="LEFT">
+<TD>Tel.:&nbsp«D_Telefon»</TD>
+<TD><B>«O_PSC»</B></TD>
+<TD><B>«O_Posta»</B></TD>
+</TR>
+<TR ALIGN="LEFT">
+<TD COLSPAN=2>Dodat po:&nbsp«Dodat_po»</TD>
+<TD><B>Tel.: «O_Telefon»</B></TD>
+</TR>
+<TR ALIGN="LEFT">
+<TD COLSPAN=2>IÈO:&nbsp«D_ICO»</TD>
+<TD>Datum pøijetí objednávky:&nbsp«Dat_Prij»</B></TD>
+</TR>
+<TR ALIGN="LEFT">
+<TD COLSPAN=2>Dodací lhùta:&nbsp;«Dod_Lhuta»</TD>
+<TD>Zpùsob úhrady:&nbsp;&nbsp;&nbsp;&nbsp;«Zp_Uhr»</B></TD>
+</TR>
+«Misto_Urc»
+</TABLE>
+</TD></TR>
+<TR><TD>
+<TABLE ALIGN="LEFT" BGCOLOR="white" CELLPADDING=4 CELLSPACING=2 COLS=4 BORDER=0 RULES="NONE">
+<TR>
+<TD ALIGN="LEFT" WIDTH=387 HEIGHT=35><FONT SIZE=2><B>Druh dodávky</B></FONT></TD> 
+<TD ALIGN="RIGHT" WIDTH=56><FONT SIZE=2><B>Cena/kus</B></FONT></TD> 
+<TD ALIGN="RIGHT" WIDTH=52><FONT SIZE=2><B>Množství</B></FONT></TD> 
+<TD ALIGN="RIGHT" WIDTH=72><FONT SIZE=2><B>Cena celkem</B></FONT></TD> 
+</TR>
+«Vyrobky»
+«Pozn_Zak»
+</TABLE>
+</TD></TR>
