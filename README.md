@@ -166,4 +166,4 @@ Výsledný soubor `EvidenceSkleniků.exe` se vytvoří ve složce `app/dist/`.
 
 ---
 
-*Vyvinuto pro společnost TS Skleníky.*
+*Vyvinuto pro společnost Skleníky Tobiáš.*
