@@ -464,21 +464,24 @@ class RozvozniPlanyDialog(QDialog):
             return
         orders = self._get_orders_for_route(sel["cislo"])
 
-        reply = QMessageBox.question(
-            self, "Vyřízení trasy",
-            f"Opravdu vyřídit trasu '{sel['smer']}' ze dne {sel['datum_str']}?\n"
-            f"Bude označeno {len(orders)} objednávek jako vyřízených.",
-            QMessageBox.Yes | QMessageBox.No
+        from app.views.datum_vyrizeni_dialog import DatumVyrizeniDialog
+        init_date = sel.get("datum_date") or sel.get("datum_str") or datetime.date.today()
+        dlg = DatumVyrizeniDialog(
+            parent=self,
+            title="Vyřízení trasy",
+            prompt=f"Potvrďte datum vyřízení pro {len(orders)} objednávek na této trase:",
+            initial_date=init_date,
+            info_text=f"Trasa: {sel.get('smer', '')} (plán: {sel.get('datum_str', '')})"
         )
-        if reply != QMessageBox.Yes:
+        if dlg.exec() != QDialog.Accepted:
             return
 
-        today = datetime.date.today()
+        chosen_date = dlg.selected_date()
         updates = {}
         for o in orders:
             c = str(o.get("CISLO_OBJ", ""))
             if not o.get("DATUM_VYR"):
-                updates[c] = {"DATUM_VYR": today}
+                updates[c] = {"DATUM_VYR": chosen_date}
         if updates:
             self.ctx.db.batch_update("tsd04", "CISLO_OBJ", updates)
 
@@ -490,7 +493,7 @@ class RozvozniPlanyDialog(QDialog):
 
         QMessageBox.information(
             self, "Vyřízení trasy",
-            f"Trasa '{sel['smer']}' byla vyřízena.\n"
+            f"Trasa '{sel['smer']}' byla vyřízena s datem {chosen_date.strftime('%d.%m.%Y')}.\n"
             f"Označeno objednávek: {len(orders)}"
         )
         self._load_data()
@@ -687,7 +690,7 @@ class PrirazeniObjednavekDialog(QDialog):
             self.table.setItem(i, 4, QTableWidgetItem(eff_addr["psc"]))
             self.table.setItem(i, 5, QTableWidgetItem(eff_addr["posta"]))
             self.table.setItem(i, 6, QTableWidgetItem(
-                str(o.get("MOBIL", "") or o.get("TELEFON", "")).strip()))
+                format_phone_number(str(o.get("MOBIL", "") or o.get("TELEFON", "")).strip())))
             d = o.get("DATUM_PR")
             datum_str = d.strftime("%d.%m.%Y") if hasattr(d, 'strftime') else str(d or "")
             self.table.setItem(i, 7, DateSortItem(datum_str))

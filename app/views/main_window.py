@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QMenu, QMessageBox, QFrame,
     QProgressDialog, QDialog, QDateEdit, QApplication, QComboBox
 )
-from PySide6.QtCore import Qt, QDate, QSettings
+from PySide6.QtCore import Qt, QDate, QSettings, QTimer, QThread, Signal
 from PySide6.QtGui import QAction
 
 
@@ -45,6 +45,18 @@ class UklidArchivuDialog(QDialog):
 
     def selected_date(self) -> QDate:
         return self.date_edit.date()
+
+
+class CheckUpdateWorker(QThread):
+    finished = Signal(object)
+
+    def run(self):
+        try:
+            from app.services.github_updater import check_for_updates
+            info = check_for_updates()
+            self.finished.emit(info)
+        except Exception:
+            self.finished.emit(None)
 
 
 class MainWindow(QMainWindow):
@@ -151,10 +163,20 @@ class MainWindow(QMainWindow):
         main_layout.addLayout(content_layout)
         main_layout.addStretch()
 
+        # Status bar for free numbers & system status
+        self.status_bar = self.statusBar()
+        self.lbl_free_numbers_status = QLabel("")
+        self.lbl_free_numbers_status.setStyleSheet("padding: 2px 10px; font-weight: bold;")
+        self.status_bar.addPermanentWidget(self.lbl_free_numbers_status)
+        self._update_free_numbers_status()
+
         # --- Setup menus ---
         self._setup_menus()
         self._setup_connections()
         self._set_buttons_enabled(False)
+
+        # Check for updates in background 2.5s after launch
+        QTimer.singleShot(2500, lambda: self._check_updates(manual=False))
 
     def _setup_menus(self):
         # Objednávky popup menu
@@ -191,6 +213,8 @@ class MainWindow(QMainWindow):
         self.menu_servis.addSeparator()
         self.act_zaloha = self.menu_servis.addAction("Záloha a obnovení")
         self.act_migrace = self.menu_servis.addAction("Převod databáze (DBF ↔ SQLite)")
+        self.menu_servis.addSeparator()
+        self.act_aktualizace = self.menu_servis.addAction("Zkontrolovat aktualizace...")
 
     def _setup_connections(self):
         self.btn_objednavky.clicked.connect(lambda: self._show_menu(self.btn_objednavky, self.menu_objednavky))
@@ -229,6 +253,7 @@ class MainWindow(QMainWindow):
         self.act_psc.triggered.connect(self._open_psc)
         self.act_zaloha.triggered.connect(self._open_zaloha)
         self.act_migrace.triggered.connect(self._open_migrace_db)
+        self.act_aktualizace.triggered.connect(lambda: self._check_updates(manual=True))
 
     def _show_menu(self, button: QPushButton, menu: QMenu):
         pos = button.mapToGlobal(button.rect().bottomRight())
@@ -279,17 +304,40 @@ class MainWindow(QMainWindow):
         self._set_buttons_enabled(True)
         self.password_edit.setReadOnly(True)
         self.password_edit.setStyleSheet("background-color: #2E7D32; color: white;")
+        self._update_free_numbers_status()
+
+    def _update_free_numbers_status(self):
+        try:
+            from app.utils import get_free_order_numbers
+            next_num, gaps = get_free_order_numbers(self.ctx)
+            if gaps:
+                preview = ", ".join(map(str, gaps[:6]))
+                if len(gaps) > 6:
+                    preview += f" ... (+{len(gaps) - 6})"
+                self.lbl_free_numbers_status.setText(f"💡 Volná čísla objednávek: {preview} (nejnižší volné: {gaps[0]})")
+                self.lbl_free_numbers_status.setStyleSheet(
+                    "color: #E65100; font-weight: bold; background-color: rgba(255, 152, 0, 0.15); border-radius: 4px; padding: 2px 10px;"
+                )
+                self.lbl_free_numbers_status.setVisible(True)
+            else:
+                self.lbl_free_numbers_status.setText("Čísla objednávek v souvislé řadě (žádná uvolněná čísla)")
+                self.lbl_free_numbers_status.setStyleSheet("color: #757575; font-style: italic; padding: 2px 10px;")
+                self.lbl_free_numbers_status.setVisible(True)
+        except Exception:
+            self.lbl_free_numbers_status.setVisible(False)
 
     # --- Dialog openers ---
     def _open_nova_objednavka(self):
         from app.views.objednavka_dialog import ObjednavkaDialog
         dlg = ObjednavkaDialog(self.ctx, mode="new", parent=self)
         dlg.exec()
+        self._update_free_numbers_status()
 
     def _open_zmena_objednavky(self):
         from app.views.objednavka_dialog import ObjednavkaDialog
         dlg = ObjednavkaDialog(self.ctx, mode="change", parent=self)
         dlg.exec()
+        self._update_free_numbers_status()
 
     def _open_oprava_objednavky(self):
         from app.views.vyhledani_objednavky_dialog import VyhledaniObjednavkyDialog
@@ -298,11 +346,13 @@ class MainWindow(QMainWindow):
             from app.views.objednavka_dialog import ObjednavkaDialog
             dlg = ObjednavkaDialog(self.ctx, cislo_obj=lookup.selected_cislo, parent=self)
             dlg.exec()
+            self._update_free_numbers_status()
 
     def _open_seznam_objednavek(self):
         from app.views.seznam_objednavek_dialog import SeznamObjednavekDialog
         dlg = SeznamObjednavekDialog(self.ctx, parent=self)
         dlg.exec()
+        self._update_free_numbers_status()
 
     def _open_vyhledani_sestavy_obj(self):
         from app.views.vyhledani_sestavy_v_objednavkach_dialog import VyhledaniSestavyVObjednavkachDialog
@@ -313,6 +363,7 @@ class MainWindow(QMainWindow):
         from app.views.vlastni_odvozy_dialog import VlastniOdvozyDialog
         dlg = VlastniOdvozyDialog(self.ctx, parent=self)
         dlg.exec()
+        self._update_free_numbers_status()
 
     def _open_eposta(self):
         from app.views.elektronicka_posta_dialog import ElektronickaPostaDialog
@@ -525,3 +576,33 @@ class MainWindow(QMainWindow):
             progress.close()
 
         event.accept()
+
+    def _check_updates(self, manual: bool = False):
+        """Check for updates from GitHub Releases asynchronously."""
+        self._update_worker = CheckUpdateWorker(parent=self)
+
+        def on_finished(info):
+            if not info:
+                if manual:
+                    QMessageBox.warning(
+                        self,
+                        "Aktualizace",
+                        "Nepodařilo se ověřit aktualizace na GitHubu.\nZkontrolujte připojení k internetu."
+                    )
+                return
+
+            if info.has_update:
+                from app.views.update_dialog import UpdateDialog
+                dlg = UpdateDialog(info, parent=self)
+                dlg.exec()
+            elif manual:
+                from app.version import APP_VERSION
+                QMessageBox.information(
+                    self,
+                    "Aktualizace",
+                    f"Máte nejnovější verzi aplikace (v{APP_VERSION})."
+                )
+
+        self._update_worker.finished.connect(on_finished)
+        self._update_worker.start()
+

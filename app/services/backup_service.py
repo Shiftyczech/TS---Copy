@@ -115,21 +115,98 @@ class BackupService:
         if os.path.isfile(zip_path):
             os.remove(zip_path)
 
+    def _dump_mariadb(self, out_sql_path: str):
+        """Export MariaDB database to an SQL dump file."""
+        if getattr(self.ctx, "backend_name", "") != "mariadb" or not getattr(self.ctx, "db", None):
+            return
+        conn = getattr(self.ctx.db, "_get_connection", lambda: None)()
+        if not conn:
+            return
+
+        with open(out_sql_path, "w", encoding="utf-8") as f:
+            f.write("-- TS Skleniky MariaDB Dump\n")
+            f.write(f"-- Generated: {datetime.datetime.now().isoformat()}\n\n")
+            f.write("SET FOREIGN_KEY_CHECKS=0;\n\n")
+
+            with conn.cursor() as cur:
+                cur.execute("SHOW TABLES;")
+                tables = [r[0] for r in cur.fetchall()]
+
+                for tbl in tables:
+                    cur.execute(f"SHOW CREATE TABLE `{tbl}`;")
+                    create_stmt = cur.fetchone()[1]
+                    f.write(f"DROP TABLE IF EXISTS `{tbl}`;\n")
+                    f.write(f"{create_stmt};\n\n")
+
+                    cur.execute(f"SELECT * FROM `{tbl}`;")
+                    rows = cur.fetchall()
+                    if rows:
+                        col_names = [d[0] for d in cur.description]
+                        col_str = ", ".join(f"`{c}`" for c in col_names)
+                        f.write(f"INSERT INTO `{tbl}` ({col_str}) VALUES\n")
+                        batch_lines = []
+                        for r in rows:
+                            vals = []
+                            for val in r:
+                                if val is None:
+                                    vals.append("NULL")
+                                elif isinstance(val, (int, float)):
+                                    vals.append(str(val))
+                                elif isinstance(val, (datetime.date, datetime.datetime)):
+                                    vals.append(f"'{val}'")
+                                else:
+                                    escaped = str(val).replace("\\", "\\\\").replace("'", "\\'")
+                                    vals.append(f"'{escaped}'")
+                            batch_lines.append(f"  ({', '.join(vals)})")
+                        f.write(",\n".join(batch_lines) + ";\n\n")
+
+            f.write("SET FOREIGN_KEY_CHECKS=1;\n")
+
     def backup_local(self, dest_dir, progress_cb=None):
-        """Create a ZIP backup of the DATA folder to dest_dir."""
+        """Create a ZIP backup of the DATA folder (and MariaDB dump if active) to dest_dir."""
+        if hasattr(self.ctx, "db") and self.ctx.db and hasattr(self.ctx.db, "checkpoint"):
+            try:
+                self.ctx.db.checkpoint()
+            except Exception as e:
+                print(f"[BackupService] Checkpoint error: {e}")
+
+        # Dump MariaDB to SQL file inside DATA if active
+        mariadb_sql_path = None
+        if getattr(self.ctx, "backend_name", "") == "mariadb":
+            try:
+                mariadb_sql_path = os.path.join(self.data_dir, "mariadb_backup.sql")
+                self._dump_mariadb(mariadb_sql_path)
+            except Exception as e:
+                print(f"[BackupService] MariaDB dump error: {e}")
+
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         zip_name = f"{self.BACKUP_PREFIX}{timestamp}.zip"
         zip_path = os.path.join(dest_dir, zip_name)
 
         files = self._get_data_files()
+        if mariadb_sql_path and os.path.isfile(mariadb_sql_path) and mariadb_sql_path not in files:
+            files.append(mariadb_sql_path)
+
+        # Include db_config.ini in the backup if it exists
+        db_cfg_path = os.path.join(self.ctx.app_dir, "db_config.ini")
+        if os.path.isfile(db_cfg_path):
+            files.append(db_cfg_path)
+
         total = len(files)
 
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-            for i, fpath in enumerate(files):
-                arcname = os.path.relpath(fpath, self.ctx.app_dir)
-                zf.write(fpath, arcname)
-                if progress_cb:
-                    progress_cb(int((i + 1) / total * 100))
+        try:
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                for i, fpath in enumerate(files):
+                    arcname = os.path.relpath(fpath, self.ctx.app_dir)
+                    zf.write(fpath, arcname)
+                    if progress_cb:
+                        progress_cb(int((i + 1) / total * 100))
+        finally:
+            if mariadb_sql_path and os.path.isfile(mariadb_sql_path):
+                try:
+                    os.remove(mariadb_sql_path)
+                except Exception:
+                    pass
 
         return zip_path
 
@@ -138,8 +215,12 @@ class BackupService:
         if not os.path.isfile(zip_path):
             raise FileNotFoundError(f"Záloha nenalezena: {zip_path}")
 
+        if hasattr(self.ctx, "close_db"):
+            self.ctx.close_db()
+
         with zipfile.ZipFile(zip_path, "r") as zf:
-            members = zf.namelist()
+            # Skip any .db-shm files (temporary shared memory, should never be restored)
+            members = [m for m in zf.namelist() if not m.lower().endswith(".db-shm")]
             total = len(members)
             for i, member in enumerate(members):
                 # Security: prevent path traversal
@@ -149,6 +230,15 @@ class BackupService:
                 zf.extract(member, self.ctx.app_dir)
                 if progress_cb:
                     progress_cb(int((i + 1) / total * 100))
+
+        # Clean up any leftover temporary SQLite WAL/SHM files on disk
+        for extra in ["ts_data.db-shm", "ts_data.db-wal"]:
+            extra_path = os.path.join(self.data_dir, extra)
+            if os.path.isfile(extra_path):
+                try:
+                    os.remove(extra_path)
+                except Exception as e:
+                    print(f"[BackupService] Upozornění: Nelze smazat dočasný {extra}: {e}")
 
     def backup_gdrive(self, progress_cb=None):
         """Backup DATA folder to Google Drive."""
@@ -201,7 +291,7 @@ class BackupService:
         """Get all DATA files for backup."""
         patterns = [
             "*.DBF", "*.FPT", "*.CDX", "*.DBC", "*.DCT", "*.DCX",
-            "*.db", "*.sqlite", "*.db-wal", "*.db-shm"
+            "*.db", "*.sqlite", "*.db-wal"
         ]
         files = []
         for pattern in patterns:

@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QComboBox, QCheckBox, QDateEdit, QProgressDialog,
     QSplitter, QWidget, QAbstractItemView
 )
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QColor, QBrush
 from PySide6.QtCore import Qt, QDate, Signal
 from app.utils import format_phone_number, get_effective_address
 import json
@@ -128,6 +128,13 @@ class SeznamObjednavekDialog(QDialog):
         self.combo_stav.addItems(["Všechny", "Nové", "Vyřízené", "Storno"])
         self.combo_stav.currentIndexChanged.connect(self._filter)
         filter_row.addWidget(self.combo_stav)
+
+        if not self.trasa_filter:
+            filter_row.addWidget(QLabel("Doprava:"))
+            self.combo_doprava = QComboBox()
+            self.combo_doprava.addItems(["Všechny", "Pouze rozvoz", "Vlastní odvoz"])
+            self.combo_doprava.currentIndexChanged.connect(self._filter)
+            filter_row.addWidget(self.combo_doprava)
 
         layout.addLayout(filter_row)
 
@@ -345,8 +352,13 @@ class SeznamObjednavekDialog(QDialog):
             if not ok:
                 QMessageBox.warning(self, "Chyba", f"Chyba při načítání: {msg}")
                 return
-            self._all_rows, self._trasy_cache, self._symbols_cache, self._items_by_obj, self._details_by_obj, self._parts_of_sestava = result
-            self._filter()
+            try:
+                self._all_rows, self._trasy_cache, self._symbols_cache, self._items_by_obj, self._details_by_obj, self._parts_of_sestava = result
+                self._filter()
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                QMessageBox.critical(self, "Chyba", f"Při zpracování seznamu objednávek došlo k chybě:\n{e}")
 
         self._load_worker.progress.connect(on_progress)
         self._load_worker.finished.connect(on_finished)
@@ -392,9 +404,13 @@ class SeznamObjednavekDialog(QDialog):
         elif stav_idx == 3:
             rows = [r for r in rows if str(r.get("STATUS", "")).upper() == "S"]
 
-        # Odvozy se řeší v samostatném okně, tady je skryjeme úplně (ale v archivu je zobrazíme)
-        if not self.is_archive:
-            rows = [r for r in rows if r.get("VL_ODVOZ") not in ("1", 1, True, "True", "true")]
+        # Filtr dopravy (Všechny / Pouze rozvoz / Vlastní odvoz)
+        if hasattr(self, "combo_doprava"):
+            doprava_idx = self.combo_doprava.currentIndex()
+            if doprava_idx == 1:  # Pouze rozvoz
+                rows = [r for r in rows if r.get("VL_ODVOZ") not in ("1", 1, True, "True", "true")]
+            elif doprava_idx == 2:  # Pouze vlastní odvoz
+                rows = [r for r in rows if r.get("VL_ODVOZ") in ("1", 1, True, "True", "true")]
 
         self._display(rows)
 
@@ -468,8 +484,8 @@ class SeznamObjednavekDialog(QDialog):
             syms = self._symbols_cache.get(cislo, set()) or self._symbols_cache.get(str(raw_cislo), set())
             syms_str = "".join(sorted(syms))
             
-            eff_addr = get_effective_address(r)
-            use_delivery = eff_addr["has_delivery"]
+            use_delivery = bool(self.trasa_filter)
+            eff_addr = get_effective_address(r, prefer_delivery=use_delivery)
 
             vals = [
                 cislo,
@@ -500,6 +516,13 @@ class SeznamObjednavekDialog(QDialog):
                     item.setData(Qt.UserRole, use_delivery)
                 else:
                     item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+
+                # Zvýraznění vlastního odvozu ve sloupci Trasa
+                if j == len(vals) - 1 and r.get("VL_ODVOZ") in ("1", 1, True, "True", "true"):
+                    item.setForeground(QBrush(QColor("#0288D1")))
+                    font = item.font()
+                    font.setBold(True)
+                    item.setFont(font)
                     
                 self.table.setItem(i, j, item)
             
@@ -574,29 +597,40 @@ class SeznamObjednavekDialog(QDialog):
         
         for r in rows:
             cislo = str(r.get("CISLO_OBJ", ""))
-            
-            # Sestavy (greenhouse systems) -> unpack to parts
-            for item in self._items_by_obj.get(cislo, []):
-                try:
-                    kod_sestavy = int(item.get("KOD")) if item.get("KOD") is not None else None
-                except ValueError:
-                    kod_sestavy = None
+            details = self._details_by_obj.get(cislo, [])
+            items = self._items_by_obj.get(cislo, [])
+
+            # Check if this order already has kit glass in its details (tsd04b/tsd06b)
+            has_kit_glass = any(
+                str(d.get("TYPDILU", "")).strip().upper() == 'S' or
+                'sklo' in str(d.get("NAZEV", "")).lower() or
+                'skel' in str(d.get("NAZEV", "")).lower()
+                for d in details
+            )
+
+            # Sestavy (greenhouse systems) -> unpack to parts ONLY if details do not already contain them
+            if not has_kit_glass:
+                for item in items:
+                    try:
+                        kod_sestavy = int(item.get("KOD")) if item.get("KOD") is not None else None
+                    except ValueError:
+                        kod_sestavy = None
+                        
+                    mnozstvi_sestavy = int(float(item.get("MNOZSTVI", 1) or 1))
                     
-                mnozstvi_sestavy = int(float(item.get("MNOZSTVI", 1) or 1))
-                
-                parts = self._parts_of_sestava.get(kod_sestavy) if kod_sestavy is not None else []
-                for p in parts:
-                    p_kod = p.get("KOD", "")
-                    p_nazev = p.get("NAZEV", "")
-                    p_mnozstvi = int(float(p.get("MNOZSTVI", 1) or 1))
-                    
-                    key = str(p_kod) if p_kod else p_nazev
-                    aggregated[key]["kod"] = p_kod
-                    aggregated[key]["nazev"] = p_nazev
-                    aggregated[key]["mnozstvi"] += (p_mnozstvi * mnozstvi_sestavy)
+                    parts = self._parts_of_sestava.get(kod_sestavy) if kod_sestavy is not None else []
+                    for p in parts:
+                        p_kod = p.get("KOD", "")
+                        p_nazev = p.get("NAZEV", "")
+                        p_mnozstvi = int(float(p.get("MNOZSTVI", 1) or 1))
+                        
+                        key = str(p_kod) if p_kod else p_nazev
+                        aggregated[key]["kod"] = p_kod
+                        aggregated[key]["nazev"] = p_nazev
+                        aggregated[key]["mnozstvi"] += (p_mnozstvi * mnozstvi_sestavy)
             
-            # Díly (loose parts)
-            for detail in self._details_by_obj.get(cislo, []):
+            # Díly (all parts / details attached to order)
+            for detail in details:
                 d_kod = detail.get("KOD", "")
                 d_nazev = detail.get("NAZEV", "")
                 d_mnozstvi = int(float(detail.get("MNOZSTVI", 1) or 1))
@@ -645,6 +679,8 @@ class SeznamObjednavekDialog(QDialog):
             return s
 
     def _fmt_trasa(self, r):
+        if r.get("VL_ODVOZ") in ("1", 1, True, "True", "true"):
+            return "Vlastní odvoz"
         trasa = str(r.get("TRASA", "")).strip()
         if not trasa:
             return ""
@@ -770,12 +806,17 @@ class SeznamObjednavekDialog(QDialog):
             table_a = table + "a"
             table_b = table + "b"
             
-            with self.ctx.db.session():
-                self.ctx.db.batch_delete(table, "CISLO_OBJ", set(cisla))
-                self.ctx.db.batch_delete(table_a, "CISLO_OBJ", set(cisla))
-                self.ctx.db.batch_delete(table_b, "CISLO_OBJ", set(cisla))
-                
-            self._load_data()
+            try:
+                with self.ctx.db.session():
+                    self.ctx.db.batch_delete(table, "CISLO_OBJ", set(cisla))
+                    self.ctx.db.batch_delete(table_a, "CISLO_OBJ", set(cisla))
+                    self.ctx.db.batch_delete(table_b, "CISLO_OBJ", set(cisla))
+                self.ctx.invalidate_cache(table)
+                self.ctx.invalidate_cache(table_a)
+                self.ctx.invalidate_cache(table_b)
+                self._load_data()
+            except Exception as e:
+                QMessageBox.critical(self, "Chyba", f"Nepodařilo se smazat objednávku:\n{e}")
 
     def _mark_as_completed(self):
         rows = self.table.selectionModel().selectedRows()
@@ -801,14 +842,34 @@ class SeznamObjednavekDialog(QDialog):
         if not to_complete:
             QMessageBox.information(self, "Vyřízení", "Všechny vybrané objednávky jsou již vyřízené.")
             return
-            
-        msg = f"Opravdu chcete označit {len(to_complete)} objednávek jako vyřízených?" if len(to_complete) > 1 else f"Opravdu chcete označit objednávku č. {to_complete[0]} jako vyřízenou?"
-        if QMessageBox.question(self, "Označit jako vyřízené", msg, QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
-            today = datetime.date.today()
-            updates = {c: {"DATUM_VYR": today} for c in to_complete}
-            self.ctx.db.batch_update(self.source_table, "CISLO_OBJ", updates)
-            QMessageBox.information(self, "Vyřízeno", "Objednávky byly označeny jako vyřízené s dnešním datem.")
-            self._load_data()
+
+        # Determine prefilled initial date (delivery date DATUM_NA from first order or today)
+        init_date = None
+        for c in to_complete:
+            row_data = next((r for r in self._all_rows if str(r.get("CISLO_OBJ", "")).strip() == str(c).strip()), None)
+            if row_data and row_data.get("DATUM_NA"):
+                init_date = row_data.get("DATUM_NA")
+                break
+        if not init_date:
+            init_date = datetime.date.today()
+
+        from app.views.datum_vyrizeni_dialog import DatumVyrizeniDialog
+        info = f"Objednávka č. {to_complete[0]}" if len(to_complete) == 1 else f"Vybráno {len(to_complete)} objednávek"
+        dlg = DatumVyrizeniDialog(
+            parent=self,
+            title="Označit jako vyřízené",
+            prompt="Zadejte datum vyřízení:",
+            initial_date=init_date,
+            info_text=info
+        )
+        if dlg.exec() != QDialog.Accepted:
+            return
+
+        chosen_date = dlg.selected_date()
+        updates = {c: {"DATUM_VYR": chosen_date} for c in to_complete}
+        self.ctx.db.batch_update(self.source_table, "CISLO_OBJ", updates)
+        QMessageBox.information(self, "Vyřízeno", f"Objednávky byly označeny jako vyřízené k datu {chosen_date.strftime('%d.%m.%Y')}.")
+        self._load_data()
 
     def _archive_order(self):
         cisla_list = self._selected_cisla()
@@ -819,17 +880,38 @@ class SeznamObjednavekDialog(QDialog):
         for c in cisla_list:
             row = next((r for r in self._all_rows if str(r.get("CISLO_OBJ", "")).strip() == str(c).strip()), None)
             if row:
-                if not row.get("DATUM_VYR"):
-                    QMessageBox.warning(
-                        self, "Archiv",
-                        f"Nelze archivovat objednávku č. {c}, protože není vyřízená (nemá datum vyřízení).\nLze archivovat pouze vyřízené objednávky."
-                    )
-                    return
                 rows_to_archive.append(row)
                 
         if not rows_to_archive:
             return
-            
+
+        # Check if any orders lack completion date and offer to set it
+        uncompleted_rows = [r for r in rows_to_archive if not r.get("DATUM_VYR")]
+        if uncompleted_rows:
+            init_date = None
+            for r in uncompleted_rows:
+                if r.get("DATUM_NA"):
+                    init_date = r.get("DATUM_NA")
+                    break
+            if not init_date:
+                init_date = datetime.date.today()
+
+            from app.views.datum_vyrizeni_dialog import DatumVyrizeniDialog
+            info = f"Objednávka č. {uncompleted_rows[0].get('CISLO_OBJ')}" if len(uncompleted_rows) == 1 else f"{len(uncompleted_rows)} objednávek bez data vyřízení"
+            dlg = DatumVyrizeniDialog(
+                parent=self,
+                title="Datum vyřízení pro archivaci",
+                prompt="Vybrané objednávky ještě nemají datum vyřízení.\nZadejte datum vyřízení pro přesun do archivu:",
+                initial_date=init_date,
+                info_text=info
+            )
+            if dlg.exec() != QDialog.Accepted:
+                return
+
+            chosen_date = dlg.selected_date()
+            for r in uncompleted_rows:
+                r["DATUM_VYR"] = chosen_date
+                
         msg = f"Přesunout objednávku č. {cisla_list[0]} do archivu?" if len(cisla_list) == 1 else f"Přesunout {len(cisla_list)} objednávek do archivu?"
         if QMessageBox.question(
             self, "Archivovat", msg,
@@ -936,6 +1018,13 @@ class SeznamObjednavekDialog(QDialog):
 
             items_table = "tsd06a" if self.is_archive else "tsd04a"
             details_table = "tsd06b" if self.is_archive else "tsd04b"
+
+            try:
+                all_tsd02a = self.ctx.db.read_all("tsd02a")
+                all_kit_glass_kods = {int(float(p.get("KOD", 0) or 0)) for p in all_tsd02a}
+            except Exception:
+                all_tsd02a = []
+                all_kit_glass_kods = set()
             
             for idx, cislo in enumerate(cisla_list):
                 try:
@@ -1012,6 +1101,19 @@ class SeznamObjednavekDialog(QDialog):
                     
                     has_items = bool(items) or bool(details)
                     if has_items:
+                        recipe_quotas = {}
+                        for it_q in items:
+                            try:
+                                kq = int(float(it_q.get("KOD", 0) or 0))
+                                mq = int(float(it_q.get("MNOZSTVI", 1) or 1))
+                                for p in all_tsd02a:
+                                    if int(float(p.get("FINAL", 0) or 0)) == kq:
+                                        pk = int(float(p.get("KOD", 0) or 0))
+                                        pm = int(float(p.get("MNOZSTVI", 1) or 1))
+                                        recipe_quotas[(kq, pk)] = recipe_quotas.get((kq, pk), 0) + (pm * mq)
+                            except Exception:
+                                pass
+
                         items_html = '<table style="width: 100%; font-size: 12px; margin-top: 4px;" cellpadding="0" cellspacing="0">'
                         for it in items:
                             nazev = str(it.get("NAZEV", "")).strip()
@@ -1049,12 +1151,6 @@ class SeznamObjednavekDialog(QDialog):
                                 kod = None
                             
                             if details and kod is not None:
-                                try:
-                                    assembly_parts = self.ctx.db.read_where("tsd02a", {"FINAL": kod})
-                                    glass_kods = {int(float(p.get("KOD", 0) or 0)) for p in assembly_parts}
-                                except Exception:
-                                    glass_kods = set()
-                                    
                                 for d in details:
                                     try:
                                         final = int(float(d.get("FINAL", 0) or 0))
@@ -1063,14 +1159,35 @@ class SeznamObjednavekDialog(QDialog):
                                     if final == kod:
                                         printed_details.add(id(d))
                                         d_kod = int(float(d.get("KOD", 0) or 0))
-                                        is_glass = d_kod in glass_kods
+                                        typ_dilu = str(d.get("TYPDILU", "") or "").strip().upper()
                                         
                                         d_nazev = str(d.get("NAZEV", "")).strip()
                                         d_mnoz = int(float(d.get("MNOZSTVI", 1) or 1))
                                         d_cena = int(float(d.get("CENA", 0) or 0))
-                                        d_celk = d_cena * d_mnoz
                                         
-                                        if is_glass or d_celk == 0:
+                                        if typ_dilu == 'D':
+                                            is_kit_glass = False
+                                        elif typ_dilu == 'S':
+                                            is_kit_glass = True
+                                        elif (kod, d_kod) in recipe_quotas:
+                                            avail = recipe_quotas[(kod, d_kod)]
+                                            if avail >= d_mnoz:
+                                                recipe_quotas[(kod, d_kod)] -= d_mnoz
+                                                is_kit_glass = True
+                                            elif avail > 0:
+                                                extra_qty = d_mnoz - avail
+                                                recipe_quotas[(kod, d_kod)] = 0
+                                                d_mnoz = extra_qty
+                                                is_kit_glass = False
+                                            else:
+                                                is_kit_glass = False
+                                        elif d_kod in all_kit_glass_kods and d_cena == 0:
+                                            is_kit_glass = True
+                                        else:
+                                            is_kit_glass = False
+
+                                        d_celk = d_cena * d_mnoz
+                                        if is_kit_glass or d_celk == 0:
                                             continue
                                             
                                         items_html += f"""
@@ -1086,12 +1203,19 @@ class SeznamObjednavekDialog(QDialog):
                         if details:
                             for d in details:
                                 if id(d) not in printed_details:
+                                    d_kod = int(float(d.get("KOD", 0) or 0))
+                                    typ_dilu = str(d.get("TYPDILU", "") or "").strip().upper()
                                     d_nazev = str(d.get("NAZEV", "")).strip()
                                     d_mnoz = int(float(d.get("MNOZSTVI", 1) or 1))
                                     d_cena = int(float(d.get("CENA", 0) or 0))
                                     d_celk = d_cena * d_mnoz
                                     
-                                    if d_celk == 0:
+                                    if typ_dilu == 'S' or (typ_dilu != 'D' and d_kod in all_kit_glass_kods and d_cena == 0):
+                                        is_kit_glass = True
+                                    else:
+                                        is_kit_glass = False
+
+                                    if is_kit_glass or d_celk == 0:
                                         continue
                                         
                                     items_html += f"""
@@ -1120,7 +1244,7 @@ class SeznamObjednavekDialog(QDialog):
                         order_html += items_html
                         
                     # Single order total HTML
-                    order_html += f"""
+                    order_html += """
                         <table style="width: 100%; font-size: 12px; margin-top: 2px;" cellpadding="0" cellspacing="0">
                     """
                     if zaloha > 0:
@@ -1133,13 +1257,20 @@ class SeznamObjednavekDialog(QDialog):
                                 <td style="text-align: right; padding-top: 2px;">Záloha:</td>
                                 <td style="width: 80px; text-align: right; padding-top: 2px;">{format_price(zaloha)}</td>
                             </tr>
-                        """
-                        
-                    order_html += f"""
                             <tr>
-                                <td style="text-align: right; font-weight: bold; padding-top: 5px;">Celkem v hotovosti</td>
+                                <td style="text-align: right; font-weight: bold; padding-top: 5px;">K úhradě</td>
                                 <td style="width: 80px; text-align: right; font-weight: bold; padding-top: 5px;">{format_price(k_uhrade)}</td>
                             </tr>
+                        """
+                    else:
+                        order_html += f"""
+                            <tr>
+                                <td style="text-align: right; font-weight: bold; padding-top: 5px;">Celkem za objednávku</td>
+                                <td style="width: 80px; text-align: right; font-weight: bold; padding-top: 5px;">{format_price(cena_celk)}</td>
+                            </tr>
+                        """
+                        
+                    order_html += """
                         </table>
                     </div>
                     """
@@ -1175,14 +1306,14 @@ class SeznamObjednavekDialog(QDialog):
                     <td style="padding-left: 30px; padding-top: 5px;">Zálohy celkem</td>
                     <td style="text-align: right; width: 80px; padding-top: 5px;">{format_price(route_zalohy)},-</td>
                 </tr>
-                """
-                
-            summary_html += f"""
                 <tr>
                     <td colspan="4"></td>
-                    <td style="padding-left: 30px; font-weight: bold; padding-top: 5px; font-size: 14px;">K vybrání v hotovosti</td>
+                    <td style="padding-left: 30px; font-weight: bold; padding-top: 5px; font-size: 14px;">K úhradě celkem</td>
                     <td style="text-align: right; width: 80px; font-weight: bold; padding-top: 5px; font-size: 14px;">{format_price(route_k_uhrade)},-</td>
                 </tr>
+                """
+                
+            summary_html += """
             </table>
             """
             html_parts.append(summary_html)
@@ -1215,7 +1346,14 @@ class SeznamObjednavekDialog(QDialog):
             gen = DocumentGenerator(self.ctx)
             table = self.source_table
             items_table = "tsd06a" if self.is_archive else "tsd04a"
-            html = gen.generate_order(cislo, table=table, items_table=items_table, force_creation_text=True)
+            is_in_rozvoz = bool(self.trasa_filter)
+            html = gen.generate_order(
+                cislo,
+                table=table,
+                items_table=items_table,
+                force_creation_text=True,
+                prefer_delivery=is_in_rozvoz
+            )
             from app.views.document_preview_dialog import DocumentPreviewDialog
             dlg = DocumentPreviewDialog(html, f"Objednávka č. {cislo}", parent=self)
             dlg.exec()
@@ -1280,7 +1418,8 @@ class SeznamObjednavekDialog(QDialog):
 
             item_dict = {"kod": kod_str, "nazev": nazev, "mnozstvi": mnozstvi}
 
-            if "sklo" in nazev.lower():
+            nazev_lower = nazev.lower()
+            if "sklo" in nazev_lower or "skel" in nazev_lower:
                 m = dim_pattern.search(nazev)
                 area = 0.0
                 if m:

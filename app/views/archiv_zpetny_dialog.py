@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 import datetime
 from app.views.sort_items import DateSortItem
+from app.utils import format_phone_number
 
 
 class ArchivZpetnyDialog(QDialog):
@@ -77,7 +78,7 @@ class ArchivZpetnyDialog(QDialog):
                 str(r.get("Z_ULICE", "")),
                 str(r.get("Z_PSC", "")),
                 str(r.get("Z_POSTA", "")),
-                str(r.get("TELEFON", "")),
+                format_phone_number(str(r.get("TELEFON", ""))),
                 self._fmt_date(r.get("DATUM_PR")),
                 self._fmt_date(r.get("DATUM_VYR")),
             ]
@@ -117,6 +118,12 @@ class ArchivZpetnyDialog(QDialog):
             return
             
         new_val = item.text()
+        if db_field == "TELEFON":
+            new_val = format_phone_number(new_val)
+            self.table.blockSignals(True)
+            item.setText(new_val)
+            self.table.blockSignals(False)
+
         self.ctx.db.update("tsd06", "CISLO_OBJ", cislo, {db_field: new_val})
         self.ctx.invalidate_cache("tsd06")
         

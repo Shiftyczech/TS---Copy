@@ -1,0 +1,11 @@
+; Konfigurace připojení k centrální databázi MariaDB na Synology NAS
+; Tento soubor se automaticky vytvoří a uloží při nastavení v okně Konfigurace -> MariaDB.
+; Pro druhé PC stačí tento soubor (nebo celou složku) zkopírovat na disk C: druhého počítače.
+
+[database]
+backend = mariadb
+host = 10.0.0.20
+port = 3306
+database = ts_skleniky
+user = root
+password = 

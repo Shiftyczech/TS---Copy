@@ -2,7 +2,15 @@
 Email service – SMTP sending using config from tsd00 + smtp_config.ini
 Replaces MEJLOVANI.DLL from original VFP app.
 """
+# Force-import standard encodings so PyInstaller bundles and initializes them
+import encodings.idna
+import encodings.utf_8
+import encodings.ascii
+import encodings.latin_1
+import encodings.cp1250
+
 import smtplib
+import re
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
@@ -63,75 +71,32 @@ class EmailService:
 
         print(f"Final config: server={self.smtp_server}, port={self.smtp_port}, user={self.smtp_user}, sender={self.sender_email}, tls={self.use_tls}")
 
-    def send(self, to_email, subject, body, attachments=None, html_attachment=None, pdf_attachment=None):
-        """Send an email via SMTP."""
-        print(f"Sending email to: {to_email}, subject: {subject}")
+    def _log_error(self, message: str):
+        """Write error details into email_errors.log with timestamp."""
+        try:
+            log_dir = getattr(self.ctx, "app_dir", None) or os.getcwd()
+            log_path = os.path.join(log_dir, "email_errors.log")
+            ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(f"[{ts}] {message}\n")
+        except Exception:
+            pass
+
+    def _clean_and_validate_email(self, email_str: str) -> str:
+        """Strip whitespace and validate email format."""
+        if not email_str or not email_str.strip():
+            raise ValueError("E-mailová adresa příjemce není vyplněna.")
+        cleaned = email_str.strip()
+        # Basic email syntax check (user@domain.tld)
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", cleaned):
+            raise ValueError(f"Neplatná e-mailová adresa příjemce: '{email_str}'")
+        return cleaned
+
+    def _build_mime_message(self, to_email, subject, body, cc="", attachments=None, html_attachment=None, pdf_attachment=None):
+        """Construct a MIMEMultipart message with headers and attachments."""
         msg = MIMEMultipart()
         msg["From"] = formataddr((Header(self.sender_name, 'utf-8').encode(), self.sender_email))
         msg["To"] = to_email
-        msg["Subject"] = Header(subject, 'utf-8')
-
-        msg.attach(MIMEText(body, "plain", "utf-8"))
-
-        if html_attachment:
-            filename, content = html_attachment
-            part = MIMEBase("text", "html", charset="utf-8")
-            part.set_payload(content.encode("utf-8"))
-            encoders.encode_base64(part)
-            part.add_header(
-                "Content-Disposition",
-                f"attachment; filename={filename}"
-            )
-            msg.attach(part)
-            
-        if pdf_attachment:
-            filename, content_bytes = pdf_attachment
-            part = MIMEBase("application", "pdf")
-            part.set_payload(content_bytes)
-            encoders.encode_base64(part)
-            part.add_header(
-                "Content-Disposition",
-                f"attachment; filename={filename}"
-            )
-            msg.attach(part)
-
-        if attachments:
-            for filepath in attachments:
-                if os.path.isfile(filepath):
-                    with open(filepath, "rb") as f:
-                        part = MIMEBase("application", "octet-stream")
-                        part.set_payload(f.read())
-                    encoders.encode_base64(part)
-                    part.add_header(
-                        "Content-Disposition",
-                        f"attachment; filename={os.path.basename(filepath)}"
-                    )
-                    msg.attach(part)
-
-        print(f"Connecting to {self.smtp_server}:{self.smtp_port}")
-        if self.smtp_port == 465:
-            with smtplib.SMTP_SSL(self.smtp_server, self.smtp_port, timeout=30) as server:
-                server.set_debuglevel(1)
-                if self.smtp_user and self.smtp_password:
-                    server.login(self.smtp_user, self.smtp_password)
-                result = server.sendmail(self.sender_email, [to_email], msg.as_string())
-                print(f"Sendmail result: {result}")
-        else:
-            with smtplib.SMTP(self.smtp_server, self.smtp_port, timeout=30) as server:
-                server.set_debuglevel(1)
-                if self.use_tls:
-                    server.starttls()
-                if self.smtp_user and self.smtp_password:
-                    server.login(self.smtp_user, self.smtp_password)
-                result = server.sendmail(self.sender_email, [to_email], msg.as_string())
-                print(f"Sendmail result: {result}")
-        print("Email sent successfully")
-
-    def send_direct(self, to, subject, body, cc="", attachments=None, html_attachment=None, pdf_attachment=None):
-        """Send an email directly with CC support."""
-        msg = MIMEMultipart()
-        msg["From"] = formataddr((Header(self.sender_name, 'utf-8').encode(), self.sender_email))
-        msg["To"] = to
         if cc:
             msg["Cc"] = cc
         msg["Subject"] = Header(subject, 'utf-8')
@@ -172,10 +137,14 @@ class EmailService:
                         f"attachment; filename={os.path.basename(filepath)}"
                     )
                     msg.attach(part)
+        return msg
 
-        recipients = [to]
-        if cc:
-            recipients.extend(cc.split(","))
+    def _send_smtp_message(self, recipients, msg, subject_info=""):
+        """Unified SMTP transmission with translated Czech errors and diagnostic logging."""
+        if not self.smtp_server:
+            err_msg = "Není nakonfigurován žádný poštovní server (zkontrolujte nastavení nebo smtp_config.ini)."
+            self._log_error(f"{err_msg} Příjemci: {recipients}, Předmět: '{subject_info}'")
+            raise RuntimeError(err_msg)
 
         try:
             if self.smtp_port == 465:
@@ -193,26 +162,62 @@ class EmailService:
             return True
         except Exception as e:
             import socket
-            import smtplib
-            error_msg = str(e)
+            
             if isinstance(e, socket.gaierror):
-                error_msg = "Nelze najít server (zkontrolujte adresu serveru nebo připojení k internetu)."
-            elif isinstance(e, socket.timeout):
-                error_msg = "Spojení vypršelo (server neodpovídá)."
+                error_msg = f"Nelze najít poštovní server '{self.smtp_server}' (zkontrolujte adresu serveru nebo připojení k internetu)."
+            elif isinstance(e, (socket.timeout, TimeoutError)):
+                error_msg = f"Spojení s poštovním serverem '{self.smtp_server}:{self.smtp_port}' vypršelo (server neodpovídá)."
             elif isinstance(e, ConnectionRefusedError):
-                error_msg = "Spojení bylo odmítnuto (zkontrolujte port nebo zabezpečení)."
+                error_msg = f"Spojení s poštovním serverem '{self.smtp_server}:{self.smtp_port}' bylo odmítnuto (zkontrolujte port a zabezpečení)."
             elif isinstance(e, smtplib.SMTPAuthenticationError):
-                error_msg = "Chyba ověření (nesprávné jméno nebo heslo)."
+                error_msg = f"Chyba přihlášení k poštovnímu serveru pro '{self.smtp_user}' (nesprávné jméno nebo heslo)."
+            elif isinstance(e, smtplib.SMTPRecipientsRefused):
+                error_msg = f"Poštovní server odmítl příjemce ({', '.join(recipients)})."
+            elif isinstance(e, smtplib.SMTPSenderRefused):
+                error_msg = f"Poštovní server odmítl odesílatele '{self.sender_email}'."
+            elif isinstance(e, smtplib.SMTPDataError):
+                error_msg = f"Poštovní server odmítl obsah zprávy (např. překročena velikost nebo antispam): {e}"
+            elif isinstance(e, LookupError) and "idna" in str(e).lower():
+                error_msg = f"Chyba kódování domény v e-mailové adrese: {e}"
             elif isinstance(e, smtplib.SMTPException):
                 error_msg = f"Chyba poštovního serveru: {e}"
             else:
-                error_msg = f"Neznámá chyba sítě/serveru: {e}"
-            print(f"Email send error: {e}")
-            raise RuntimeError(f"Chyba při odesílání e-mailu: {error_msg}") from e
+                error_msg = f"Chyba sítě/odesílání: {e}"
+
+            self._log_error(f"Chyba odeslání: Příjemci: {recipients}, Předmět: '{subject_info}' -> {error_msg}")
+            print(f"Email send error: {error_msg}")
+            raise RuntimeError(error_msg) from e
+
+    def send(self, to_email, subject, body, attachments=None, html_attachment=None, pdf_attachment=None):
+        """Send an email via SMTP (queued sending)."""
+        valid_to = self._clean_and_validate_email(to_email)
+        msg = self._build_mime_message(
+            valid_to, subject, body, cc="",
+            attachments=attachments, html_attachment=html_attachment, pdf_attachment=pdf_attachment
+        )
+        return self._send_smtp_message([valid_to], msg, subject_info=subject)
+
+    def send_direct(self, to, subject, body, cc="", attachments=None, html_attachment=None, pdf_attachment=None):
+        """Send an email directly with CC support."""
+        valid_to = self._clean_and_validate_email(to)
+        recipients = [valid_to]
+        valid_cc_list = []
+        if cc:
+            for item in cc.split(","):
+                c = item.strip()
+                if c:
+                    valid_cc_list.append(self._clean_and_validate_email(c))
+            recipients.extend(valid_cc_list)
+
+        msg = self._build_mime_message(
+            valid_to, subject, body, cc=",".join(valid_cc_list),
+            attachments=attachments, html_attachment=html_attachment, pdf_attachment=pdf_attachment
+        )
+        return self._send_smtp_message(recipients, msg, subject_info=subject)
 
     def send_from_queue(self, record):
         """Send a single message from tsd08 queue."""
-        to_email = str(record.get("KOMU_MAIL", ""))
+        to_email = str(record.get("KOMU_MAIL", "")).strip()
         subject = str(record.get("PREDMET", ""))
         body = str(record.get("ZPRAVA", ""))
         priloha_raw = str(record.get("PRILOHA", "")).strip()
@@ -227,40 +232,83 @@ class EmailService:
                 
                 # Convert HTML to PDF
                 import tempfile
-                import os
-                from PySide6.QtGui import QTextDocument
-                from PySide6.QtPrintSupport import QPrinter
-                
-                doc = QTextDocument()
-                doc.setHtml(priloha_raw)
                 
                 fd, temp_path = tempfile.mkstemp(suffix=".pdf")
                 os.close(fd)
                 
+                pdf_bytes = None
+                pdf_err = None
                 try:
-                    printer = QPrinter()
-                    printer.setOutputFormat(QPrinter.PdfFormat)
-                    printer.setOutputFileName(temp_path)
-                    doc.print_(printer)
+                    # Preferred: QPdfWriter from PySide6.QtGui
+                    from PySide6.QtGui import QTextDocument, QPdfWriter, QPageSize
+                    from PySide6.QtCore import QMarginsF
+                    
+                    doc = QTextDocument()
+                    doc.setHtml(priloha_raw)
+                    
+                    writer = QPdfWriter(temp_path)
+                    writer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
+                    writer.setPageMargins(QMarginsF(10, 10, 10, 10))
+                    doc.print_(writer)
+                    del writer
                     
                     with open(temp_path, "rb") as f:
                         pdf_bytes = f.read()
-                    pdf_attachment = (f"objednavka_{cislo_obj}.pdf", pdf_bytes)
                 except Exception as e:
-                    print(f"Error generating PDF: {e}")
+                    pdf_err = e
+                    # Fallback: QPrinter
+                    try:
+                        from PySide6.QtGui import QTextDocument
+                        from PySide6.QtPrintSupport import QPrinter
+                        
+                        doc = QTextDocument()
+                        doc.setHtml(priloha_raw)
+                        printer = QPrinter()
+                        printer.setOutputFormat(QPrinter.PdfFormat)
+                        printer.setOutputFileName(temp_path)
+                        doc.print_(printer)
+                        del printer
+                        
+                        with open(temp_path, "rb") as f:
+                            pdf_bytes = f.read()
+                        pdf_err = None
+                    except Exception as e2:
+                        pdf_err = e2
                 finally:
                     if os.path.exists(temp_path):
-                        os.remove(temp_path)
+                        try:
+                            os.remove(temp_path)
+                        except Exception:
+                            pass
+
+                if not pdf_bytes:
+                    err_msg = f"Nepodařilo se vytvořit PDF přílohu objednávky {cislo_obj}"
+                    if pdf_err:
+                        err_msg += f": {pdf_err}"
+                    self._log_error(err_msg)
+                    raise RuntimeError(err_msg)
+
+                pdf_attachment = (f"objednavka_{cislo_obj}.pdf", pdf_bytes)
             else:
-                attachments.extend([p.strip() for p in priloha_raw.split(",") if p.strip()])
+                for p in priloha_raw.split(","):
+                    p_clean = p.strip()
+                    if p_clean:
+                        if not os.path.isfile(p_clean):
+                            err_msg = f"Příloha nebyla nalezena: '{p_clean}'"
+                            self._log_error(err_msg)
+                            raise FileNotFoundError(err_msg)
+                        attachments.append(p_clean)
                 
         if plany_raw:
             for p in plany_raw.split(","):
                 p_code = p.strip()
                 if p_code:
                     plan_path = self._get_plan_path(p_code)
-                    if plan_path:
-                        attachments.append(plan_path)
+                    if not plan_path or not os.path.isfile(plan_path):
+                        err_msg = f"Chybí soubor výkresu základů pro kód '{p_code}'."
+                        self._log_error(err_msg)
+                        raise FileNotFoundError(err_msg)
+                    attachments.append(plan_path)
             
         if not attachments:
             attachments = None

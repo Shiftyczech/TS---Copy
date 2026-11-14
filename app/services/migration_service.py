@@ -168,9 +168,23 @@ class MigrationService:
                     imported_count = 0
                     conn.execute("BEGIN TRANSACTION;")
 
+                    is_detail_table = tbl_name.lower() in ("tsd04b", "tsd06b")
+                    cena_idx = -1
+                    typdilu_idx = -1
+                    if is_detail_table:
+                        upper_fields = [f.upper() for f in field_names]
+                        if "CENA" in upper_fields and "TYPDILU" in upper_fields:
+                            cena_idx = upper_fields.index("CENA")
+                            typdilu_idx = upper_fields.index("TYPDILU")
+
                     for record in table:
                         if not dbf.is_deleted(record):
-                            batch.append(self._serialize_record(record, field_names))
+                            row = list(self._serialize_record(record, field_names))
+                            if cena_idx >= 0 and typdilu_idx >= 0:
+                                typ = str(row[typdilu_idx] or "").strip().upper()
+                                if typ == "S":
+                                    row[cena_idx] = 0
+                            batch.append(tuple(row))
                             if len(batch) >= 2000:
                                 conn.executemany(insert_sql, batch)
                                 imported_count += len(batch)
@@ -185,6 +199,12 @@ class MigrationService:
 
                 finally:
                     table.close()
+
+            # Clean up kit glass pricing and recalculate order totals
+            if progress_callback:
+                progress_callback(85, "Konzistence cen skel a přepočet celkových částek...")
+            from app.services.sqlite_service import ensure_glass_pricing_consistency
+            ensure_glass_pricing_consistency(conn)
 
             # Create Indexes
             if progress_callback:

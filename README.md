@@ -1,201 +1,169 @@
-# 🌿 TS Skleníky – Evidence a správa zakázek
+# TS Skleníky – Evidence objednávek a rozvozů
 
-Komplexní desktopový informační a evidenční systém vyvinutý pro správu zakázek, výrobu, skladové díly, expedici a logistiku skleníků. Aplikace nabízí moderní grafické rozhraní v **PySide6 (Qt for Python)**, duální podporu databází (FoxPro DBF i moderní SQLite), automatické zálohování na Google Drive a integrovanou e-mailovou komunikaci se zákazníky.
+Moderní podnikový informační a expediční systém vyvinutý v **Pythonu (PySide6 / Qt)** pro kompletní správu zakázek, kalkulaci a konfiguraci skleníků, plánování logistiky, tisk průvodek a automatizaci zákaznické komunikace.
 
----
-
-## ✨ Klíčové funkce
-
-### 📦 1. Správa objednávek a zákazníků
-- **Evidence zakázek**: Kompletní životní cyklus objednávky od přijetí, přes výrobu a kompletaci dílů, až po expedici a fakturaci.
-- **Parametrické vyhledávání a filtry**: Rychlé vyhledávání podle čísla objednávky, jména zákazníka, adresy, PSČ, typu skleníku nebo termínu dodání.
-- **Historie a zpětný archiv**: Snadný přístup k historickým objednávkám s možností nahlížení a dohledání parametrů.
-- **Automatické našeptávání adres**: Integrovaný číselník PSČ a měst pro rychlé a bezchybné zadávání doručovacích adres.
-
-### 🏗️ 2. Katalog skleníků, sestav a dílů
-- **Sestavy skleníků**: Evidence modelových řad, standardních i atypických rozměrů, výplní a volitelného příslušenství.
-- **Skladové a základní díly**: Přehled profilů, spojovacího materiálu, polic, oken a automatických otvíračů s vazbou na konkrétní sestavy.
-- **Fulltextové vyhledávání dílů v zakázkách**: Okamžité zjištění, ve kterých rozpracovaných zakázkách je daný komponent použit.
-
-### 🚚 3. Expedice a rozvozní plány
-- **Plánování rozvozových tras**: Sdružování zakázek do rozvozních plánů podle regionů, PSČ a termínů.
-- **Vlastní odvozy**: Samostatná evidence pro zákazníky, kteří si skleník vyzvedávají osobně ve výrobě.
-- **Přehledy nakládky**: Generování soupisů a podkladů pro řidiče a expediční skladníky.
-
-### 📄 4. Tiskové výstupy a dokumenty
-- **Automatické generování dokumentů**: Dodací listy, předávací protokoly, štítky na balíky a montážní soupisy.
-- **Náhled před tiskem**: Integrovaný dialog s náhledem dokumentů a přímým odesláním na tiskárnu.
-
-### ✉️ 5. Elektronická pošta a šablony zpráv
-- **Vestavěný e-mailový klient**: Odesílání potvrzení objednávek, informací o expedici a montážních pokynů přímo z aplikace.
-- **Dynamické šablony**: Předdefinované texty zpráv s automatickým doplňováním proměnných (jméno, číslo zakázky, termín rozvozu, částka).
-- **Propojení přes SMTP**: Možnost odesílání přes standardní zabezpečený SMTP protokol (včetně SSL/TLS).
-
-### ☁️ 6. Bezpečnost a zálohování dat
-- **Lokální zálohování**: Automatické vytváření komprimovaných ZIP archivů při ukončení aplikace s volitelnou rotací (např. uchování posledních 7 dní).
-- **Synchronizace na Google Drive**: Bezpečné ukládání záloh do cloudového úložiště prostřednictvím oficiálního Google Drive API (OAuth 2.0).
-- **Duální databázová vrstva & migrace**: Plynulý přechod z historických FoxPro databází (`.DBF`, `.CDX`, `.FPT`) do moderního formátu **SQLite3** s vestavěným migračním průvodcem.
-
-### 🎨 7. Moderní uživatelské rozhraní
-- **Přepínání motivů vzhledu**: Tmavý režim (Dark), světlý režim (Light) a modrý manažerský styl (Blue theme).
-- **Intuitivní klávesové zkratky**: Rychlá obsluha formulářů pomocí kláves `Enter` a akcentovaných tlačítek pro maximální rychlost práce.
+Systém byl původně provozován na platformě FoxPro (DBF/FPT) a byl kompletně zmodernizován do vysokorychlostní architektury s podporou lokální **SQLite** databáze a síťového víceuživatelského serveru **MariaDB** (Synology NAS).
 
 ---
 
-## 🛠️ Architektura a technologie
+## 🚀 Klíčové funkce a moduly
 
-- **Jazyk**: [Python](https://www.python.org/) 3.12+
-- **GUI Framework**: [PySide6](https://pypi.org/project/PySide6/) (oficiální Qt 6 binding pro Python)
-- **Databáze**: 
-  - [SQLite3](https://docs.python.org/3/library/sqlite3.html) (moderní datové úložiště)
-  - [dbf](https://pypi.org/project/dbf/) (zpětná kompatibilita s formátem dBase / Visual FoxPro)
-- **Cloudové API**: [Google API Client](https://github.com/googleapis/google-api-python-client) & [google-auth-oauthlib](https://github.com/googleapis/google-auth-library-python-oauthlib)
-- **Distribuce**: [PyInstaller](https://pyinstaller.org/) pro sestavení do samostatného spustitelného `.exe` souboru pro Windows
+### 1. 📦 Příjem a správa objednávek
+* **Rychlé zadávání zakázek:** Evidence odběratele, fakturačních a doručovacích údajů, telefonů, e-mailů a způsobu úhrady.
+* **Inteligentní našeptávač PSČ a obcí:** Automatické doplňování měst podle PSČ a naopak z vestavěné databáze PSČ ČR.
+* **Validace telefonních čísel:** Automatické formátování telefonních a mobilních čísel do standardizovaného tvaru `+420 XXX XXX XXX`.
+* **Automatické číslování s recyklací čísel:** Systém automaticky generuje nová čísla objednávek a nabízí možnost obsadit uvolněná čísla po stornovaných zakázkách.
+* **Fulltextové vyhledávání a filtrace:** Okamžité vyhledávání podle jména, adresy, PSČ, telefonního čísla, data přijetí nebo čísla objednávky.
+
+### 2. 🏗️ Skleníkové sestavy a kalkulátor dílů
+* **Evidence modelových řad:** Podpora všech typů skleníků (Variant, Satelit, Optimal, Central, Maximal atd.).
+* **Automatický rozpis na díly:** Každá sestava se automaticky rozpadá na přesné počty profilů, skel, spojovacího materiálu a doplňků.
+* **Pravidla záměny dílů:** Inteligentní logika záměn dílů (např. prodloužení, střešní větrací okna, regály, dveře).
+* **Přiřazení montážních plánků:** Výběr a zobrazení nákresů a plánků z vestavěné knihovny vzorů.
+
+### 3. 🚚 Plánování rozvozů a logistika
+* **Tvorba rozvozních tras:** Plánování rozvozů podle regionů, směrů a termínů závozů.
+* **Přiřazování objednávek do tras:** Pohodlný výběr zakázek s hlídáním kapacity vozidla a pořadí vykládky.
+* **Správa vlastních odvozů:** Přehledná evidence zákazníků, kteří si odebírají zboží osobně na skladě.
+* **Tisk plánů pro řidiče:** Generování expedičních seznamů a plánů jízd pro řidiče rozvozových vozidel.
+
+### 4. 📄 Tisk a generování dokumentů
+* **Objednávkové a dodací listy:** Profesionální formátované dokumenty připravené k tisku nebo exportu.
+* **Export do PDF s náhledem:** Integrovaný náhledový dialog s možností přímého tisku na výchozí tiskárnu nebo uložení do PDF.
+* **Hromadný tisk:** Možnost vytisknout celou dávku dokladů pro vybranou rozvozní trasu jedním klikem.
+
+### 5. ✉️ Elektronická pošta a zákaznická komunikace
+* **Automatické notifikace:** Odesílání potvrzení objednávek, avíz o termínu expedice a výzev k odběru zboží.
+* **Integrovaný e-mailový klient:** Vlastní SMTP podpora (SSL/TLS, port 465/587) nezávislá na poštovním klientovi Windows.
+* **Šablony zpráv:** Nastavitelné předlohy e-mailů a SMS zpráv s proměnnými pro zákazníka.
+* **Přehled odeslané pošty:** Historie a stav všech odeslaných zpráv s možností opětovného odeslání.
+
+### 6. 🗄️ Dlouhodobý archiv a úklid dat
+* **Dvoutřídní správa dat:** Oddělení aktivních zakázek (`tsd04`) od vyřízených (`tsd06`) pro maximální rychlost programu.
+* **Úklid do archivu:** Průvodce přesunem vyřízených a závezených objednávek k vybranému datu do archivu.
+* **Zpětný převod z archivu:** Možnost kdykoliv vrátit archivovanou objednávku zpět mezi aktivní zakázky k dořešení či reklamaci.
+
+### 7. 👥 Uživatelé a bezpečnost
+* Přihlašování uživatelů heslem.
+* Nastavení uživatelských práv a oprávnění k jednotlivým funkcím.
+
+---
+
+## 🌐 Síťový víceuživatelský provoz (Synology NAS)
+
+Program podporuje současnou práci více uživatelů v kanceláři v zapojení **Klient–Server**:
+
+```
+┌─────────────────────────┐               ┌─────────────────────────┐
+│     Počítač 1 (Win 11)  │               │    Počítač 2 (Win 11)   │
+│ Lokální běh z disku C:  │               │ Lokální běh z disku C:  │
+│  (start za < 1 sekundu) │               │  (start za < 1 sekundu) │
+└────────────┬────────────┘               └────────────┬────────────┘
+             │                                         │
+             │   TCP/IP (port 3306) – pouze SQL data   │
+             └───────────────────┬─────────────────────┘
+                                 │
+                     ┌───────────▼───────────┐
+                     │     Synology NAS      │
+                     │  Balíček MariaDB 10   │
+                     │ (běží 24/7, bezpečný  │
+                     │    souběžný přístup)  │
+                     └───────────┬───────────┘
+                                 │
+                     ┌───────────▼───────────┐
+                     │ Synology Hyper Backup │
+                     │  (automatická noční   │
+                     │   záloha bez záseků)  │
+                     └───────────────────────┘
+```
+
+* **Okamžitý start:** Program je na obou PC nainstalován lokálně na disku `C:`. Nezatěžuje síť a startuje bleskově bez načítání binárních souborů přes SMB.
+* **Centrální data v MariaDB:** Všechna data jsou uložena v MariaDB 10 na Synology NASu (`10.0.0.20:3306`).
+* **ACID transakce:** Obě stanice mohou současně vytvářet a upravovat objednávky bez rizika poškození souborů či kolizí zámků.
+* **Automatický fallback:** V případě výpadku sítě nebo nedostupnosti Synology aplikace automaticky naběhne v nouzovém režimu s lokální databází.
+
+---
+
+## 💾 Zálohování a ochrana dat
+
+1. **Automatické zálohy na Synology:** Úloha v *Hyper Backup* každou noc automaticky verzovaně zálohuje databázi MariaDB 10 bez nutnosti zásahu uživatele a bez přerušení provozu.
+2. **Ruční zálohy v aplikaci:** Přímo v menu *Servisní akce -> Záloha a obnovení* lze vytvořit kompletní ZIP zálohu na disk nebo odeslat na **Google Drive**.
+3. **Před-migrační zálohy:** Při jakémkoliv převodu či úklidu dat program automaticky vytvoří bezpečnostní archiv.
+
+---
+
+## 🔄 Vzdálené automatické aktualizace (GitHub Releases)
+
+Aplikace obsahuje vestavěný auto-updater propojený s tímto GitHub repozitářem:
+
+1. **Vydání nové verze z domova:**
+   - V souboru `app/version.py` se zvýší číslo verze (např. na `1.0.1`).
+   - Přes `build.bat` se vygeneruje nový `EvidenceSkleniků.exe`.
+   - Na GitHubu se v sekci *Releases* vytvoří nové vydání s příslušným tagem a přiloženým `.exe`.
+2. **Automatická detekce v kanceláři:**
+   - Po spuštění programu na klientském PC proběhne tichá kontrola nejnovější verze.
+   - Při nalezení nové verze se zobrazí dotaz:
+     > *K dispozici je nová verze aplikace (vX.X.X). Přejete si aplikaci nyní aktualizovat a restartovat?*
+   - Po potvrzení se nový soubor stáhne a běžící aplikace se atomicky nahradí a restartuje.
+
+---
+
+## 🛠️ Instalace a spuštění pro vývojáře
+
+### Požadavky
+* Python 3.10 – 3.13
+* Virtuální prostředí (venv)
+
+### Instalace závislostí
+```bash
+pip install -r app/requirements.txt
+```
+
+### Spuštění aplikace ze zdrojových kódů
+```bash
+python app/main.py
+```
+
+### Sestavení spustitelného souboru (.exe) pro Windows
+V kořenové složce nebo ve složce `app/` spusťte:
+```cmd
+app\build.bat
+```
+Výsledný soubor `EvidenceSkleniků.exe` se vytvoří ve složce `app/dist/`.
 
 ---
 
 ## 📁 Struktura projektu
 
 ```text
-TS - Copy/
 ├── app/
-│   ├── main.py                     # Vstupní bod aplikace, inicializace UI a témat
-│   ├── build.bat                   # Skript pro sestavení samostatného .exe souboru
-│   ├── requirements.txt            # Seznam Python závislostí
-│   │
-│   ├── models/                     # Datové modely (Objednavka, Produkt, Rozvoz, Uzivatel...)
-│   ├── services/                   # Aplikační služby (DBF, SQLite, E-mail, Google Drive, Zálohy)
-│   │   ├── sqlite_service.py       # Správa SQLite databáze
-│   │   ├── dbf_service.py          # Práce s FoxPro DBF tabulkami
-│   │   ├── migration_service.py    # Nástroj pro převod DBF -> SQLite
-│   │   ├── backup_service.py       # Lokální i cloudové zálohování
-│   │   ├── email_service.py        # Odesílání pošty přes SMTP
-│   │   └── gdrive_helper.py        # Integrace s Google Drive API
-│   │
-│   ├── views/                      # Grafické dialogy a komponenty uživatelského rozhraní
-│   │   ├── main_window.py          # Hlavní okno aplikace
-│   │   ├── seznam_objednavek_dialog.py
-│   │   ├── objednavka_dialog.py
-│   │   ├── rozvozni_plany_dialog.py
-│   │   ├── sklenikove_sestavy_dialog.py
-│   │   ├── backup_dialog.py
-│   │   └── ...
-│   │
-│   ├── styles/                     # QSS styly (dark_theme.qss, light_theme.qss, blue_theme.qss)
-│   ├── DATA/                       # Složka pro databáze (DBF / ts_data.db - ignorováno gitem)
-│   ├── Zaloha/                     # Cílová složka lokálních záloh (ignorováno gitem)
-│   │
-│   ├── credentials.example.json    # Vzor konfigurace pro Google Drive OAuth
-│   ├── smtp_config.example.ini     # Vzor konfigurace pro SMTP odesílání
-│   └── backup_config.example.ini   # Vzor nastavení frekvence záloh
-│
-├── .gitignore                      # Kompletní pravidla ochrany citlivých dat a binárek
-└── README.md                       # Dokumentace projektu
+│   ├── main.py                  # Hlavní vstupní bod aplikace a AppContext
+│   ├── version.py               # Číslo verze aplikace a konfigurace pro updater
+│   ├── build.bat                # Skript pro sestavení PyInstaller .exe
+│   ├── requirements.txt         # Seznam Python knihoven
+│   ├── EvidenceSkleniku.spec    # PyInstaller specifikace pro sestavení
+│   ├── models/                  # Datové modely (objednávka, rozvoz, produkty...)
+│   ├── services/
+│   │   ├── mariadb_service.py   # Síťová databázová služba MariaDB (Synology)
+│   │   ├── sqlite_service.py    # Lokální vysokorychlostní SQLite služba
+│   │   ├── dbf_service.py       # Původní FoxPro DBF kompatibilní služba
+│   │   ├── migration_mariadb_service.py # Hromadný migrační převodník SQLite -> MariaDB
+│   │   ├── github_updater.py    # Automatické stahování a instalace aktualizací
+│   │   ├── backup_service.py    # Zálohování do ZIP a SQL dump
+│   │   ├── email_service.py     # Odesílání e-mailů přes SMTP
+│   │   └── document_generator.py# Generování tiskových podkladů a dokladů
+│   ├── views/                   # Uživatelské rozhraní Qt (dialogy a okna)
+│   │   ├── main_window.py       # Hlavní panel aplikace
+│   │   ├── objednavka_dialog.py # Dialog tvorby a editace objednávky
+│   │   ├── migrace_mariadb_dialog.py # Konfigurace a převod do MariaDB
+│   │   ├── update_dialog.py     # Dialog průběhu aktualizace z GitHubu
+│   │   └── ...                  # Ostatní specializované dialogy
+│   ├── styles/                  # Témata vzhledu (tmavé, světlé, modré QSS)
+│   ├── VZORKY/                  # Vzory nákresů a plánků skleníků
+│   └── DATA/                    # Lokální datové úložiště (ts_data.db, DBF)
+└── README.md                    # Dokumentace projektu
 ```
 
 ---
 
-## 🚀 Rychlý start (Instalace a spuštění)
-
-### 1. Prerekvizity
-- Nainstalovaný **Python 3.12** nebo novější (doporučeno [python.org](https://www.python.org/downloads/)).
-- Git pro správu verzí.
-
-### 2. Klonování repozitáře
-```bash
-git clone https://github.com/Shiftyczech/TS---Copy.git
-cd TS---Copy
-```
-
-### 3. Vytvoření virtuálního prostředí
-```bash
-# Vytvoření virtuálního prostředí
-python -m venv .venv
-
-# Aktivace na Windows (PowerShell)
-.venv\Scripts\Activate.ps1
-
-# Nebo v klasickém příkazovém řádku (cmd)
-.venv\Scripts\activate.bat
-```
-
-### 4. Instalace závislostí
-```bash
-pip install --upgrade pip
-pip install -r app/requirements.txt
-```
-
----
-
-## ⚙️ Konfigurace
-
-Před prvním spuštěním si připravte konfigurační soubory podle vzorů ve složce `app/`:
-
-### 1. Nastavení e-mailu (SMTP)
-Zkopírujte `app/smtp_config.example.ini` do `app/smtp_config.ini`:
-```ini
-[smtp]
-server = smtp.vasedomena.cz
-port = 465
-tls = no
-user = info@vasedomena.cz
-password = vase_bezpecne_heslo
-sender_email = info@vasedomena.cz
-```
-
-### 2. Nastavení Google Drive API (volitelné pro cloudové zálohy)
-1. V [Google Cloud Console](https://console.cloud.google.com/) vytvořte projekt a povolte **Google Drive API**.
-2. Vytvořte přihlašovací údaje typu **OAuth 2.0 Client ID (Desktop Application)**.
-3. Stáhněte JSON klíč a uložte jej do `app/credentials.json` (podle vzoru `app/credentials.example.json`).
-4. Při prvním spuštění zálohy na Disk vás aplikace vyzve k jednorázovému přihlášení v prohlížeči. Vytvořený autorizační token se uloží do `app/token.json`.
-
-### 3. Nastavení zálohování
-Zkopírujte `app/backup_config.example.ini` do `app/backup_config.ini`:
-```ini
-[backup]
-auto_backup = yes
-keep_count = 7
-backup_dir = Zaloha
-```
-
-### 4. Příprava databázových souborů
-Do složky `app/DATA/` nahrajte buď stávající soubory FoxPro (`.DBF`), nebo nechte aplikaci inicializovat novou SQLite databázi `ts_data.db`.
-
----
-
-## ▶️ Spuštění aplikace
-
-Spusťte hlavní skript:
-```bash
-python app/main.py
-```
-
----
-
-## 🔨 Sestavení spustitelného souboru (.exe)
-
-Pokud chcete aplikaci distribuovat koncovým uživatelům bez nutnosti instalace Pythonu:
-
-1. Ujistěte se, že máte ve virtuálním prostředí nainstalovaný PyInstaller:
-   ```bash
-   pip install pyinstaller
-   ```
-2. Spusťte přiložený sestavovací skript:
-   ```bash
-   cd app
-   build.bat
-   ```
-3. Výsledný spustitelný soubor `EvidenceSkleniků.exe` naleznete ve složce `app/dist/`. K němu stačí do stejné složky umístit složku `DATA/` s daty a konfigurační `.ini` soubory.
-
----
-
-## 🔒 Bezpečnost a ochrana dat
-
-- Repozitář obsahuje striktní `.gitignore`, který brání nechtěnému verzování reálných databázových souborů se zákaznickými údaji (`*.db`, `*.DBF`, `*.FPT`), šifrovacích klíčů, hesel (`smtp_config.ini`), OAuth tokenů (`credentials.json`, `token.json`) a velkých ZIP záloh.
-- Pro sdílení repozitáře s dalšími vývojáři vždy používejte výhradně šablonové soubory `*.example`. Nikdy do repozitáře necommitujte produkční hesla!
-
----
-
-## 📄 Licence
-
-Tento projekt je proprietární software určený pro interní evidenci a správu zakázek. Všechna práva vyhrazena.
+*Vyvinuto pro společnost TS Skleníky.*

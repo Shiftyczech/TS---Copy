@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt, QThread, Signal
+from app.views.phone_line_edit import PhoneLineEdit
 from app.utils import format_phone_number
 
 
@@ -155,12 +156,12 @@ class KonfiguraceDialog(QDialog):
         # Telefon + Fax
         row5 = QHBoxLayout()
         row5.addWidget(QLabel("Telefon:"))
-        self.edit_telefon = QLineEdit()
+        self.edit_telefon = PhoneLineEdit()
         self.edit_telefon.setMaximumWidth(180)
         row5.addWidget(self.edit_telefon)
         row5.addSpacing(30)
         row5.addWidget(QLabel("Fax:"))
-        self.edit_fax = QLineEdit()
+        self.edit_fax = PhoneLineEdit()
         self.edit_fax.setMaximumWidth(180)
         row5.addWidget(self.edit_fax)
         row5.addStretch()
@@ -249,10 +250,22 @@ class KonfiguraceDialog(QDialog):
         grp_db = QGroupBox("Databázové úložiště")
         db_layout = QHBoxLayout(grp_db)
         backend = getattr(self.ctx, "backend_name", "dbf").upper()
-        self.lbl_db_info = QLabel(f"Aktivní databáze: <b>{'SQLite (vysokorychlostní)' if backend == 'SQLITE' else 'FoxPro DBF (původní)'}</b>")
+        if backend == "MARIADB":
+            desc = "MariaDB (Synology NAS – síťový víceuživatelský provoz)"
+        elif backend == "SQLITE":
+            desc = "SQLite (lokální vysokorychlostní soubor)"
+        else:
+            desc = "FoxPro DBF (původní)"
+        self.lbl_db_info = QLabel(f"Aktivní databáze: <b>{desc}</b>")
         db_layout.addWidget(self.lbl_db_info)
         db_layout.addStretch()
-        btn_migrace = QPushButton("Správa a převod databáze...")
+
+        btn_mariadb = QPushButton("MariaDB na Synology (víceuživatelský provoz)...")
+        btn_mariadb.setObjectName("accentButton")
+        btn_mariadb.clicked.connect(self._open_mariadb_dialog)
+        db_layout.addWidget(btn_mariadb)
+
+        btn_migrace = QPushButton("Lokální SQLite...")
         btn_migrace.clicked.connect(self._open_migrace)
         db_layout.addWidget(btn_migrace)
         layout.addWidget(grp_db)
@@ -260,13 +273,28 @@ class KonfiguraceDialog(QDialog):
         layout.addStretch()
         return tab
 
+    def _open_mariadb_dialog(self):
+        from app.views.migrace_mariadb_dialog import MigraceMariaDbDialog
+        dlg = MigraceMariaDbDialog(self.ctx, parent=self)
+        dlg.exec()
+        self._refresh_db_label()
+
+    def _refresh_db_label(self):
+        backend = getattr(self.ctx, "backend_name", "sqlite").upper()
+        if backend == "MARIADB":
+            desc = "MariaDB (Synology NAS – síťový víceuživatelský provoz)"
+        elif backend == "SQLITE":
+            desc = "SQLite (lokální vysokorychlostní soubor)"
+        else:
+            desc = "FoxPro DBF (původní)"
+        if hasattr(self, "lbl_db_info"):
+            self.lbl_db_info.setText(f"Aktivní databáze: <b>{desc}</b>")
+
     def _open_migrace(self):
         from app.views.migrace_db_dialog import MigraceDbDialog
         dlg = MigraceDbDialog(self.ctx, parent=self)
         dlg.exec()
-        backend = getattr(self.ctx, "backend_name", "dbf").upper()
-        if hasattr(self, "lbl_db_info"):
-            self.lbl_db_info.setText(f"Aktivní databáze: <b>{'SQLite (vysokorychlostní)' if backend == 'SQLITE' else 'FoxPro DBF (původní)'}</b>")
+        self._refresh_db_label()
 
     # ── SMTP tab ─────────────────────────────────────────────────
     def _build_smtp_tab(self):
@@ -477,7 +505,7 @@ class KonfiguraceDialog(QDialog):
             "PSC": self.edit_psc.text().strip(),
             "OBEC": self.edit_obec.text().strip(),
             "TELEFON": format_phone_number(self.edit_telefon.text().strip()),
-            "FAX": self.edit_fax.text().strip(),
+            "FAX": format_phone_number(self.edit_fax.text().strip()),
             "MAIL": self.edit_mail.text().strip(),
             "LOGO": self.edit_logo.text().strip(),
             "DOPRAVNE": dopravne_val,

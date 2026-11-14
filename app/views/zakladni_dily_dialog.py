@@ -1,6 +1,6 @@
 """
 Základní díly a doplňky – Grid + CRUD buttons
-Columns: Číslo*, Název základního dílu nebo doplňku*, Cena, Symbol, Pozice
+Columns: Číslo*, Název základního dílu nebo doplňku*, Cena, Symbol
 """
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
@@ -25,8 +25,8 @@ class ZakladniDilyDialog(QDialog):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
 
-        self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["Číslo*", "Název základního dílu nebo doplňku*", "Cena", "Symbol", "Pozice"])
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["Číslo*", "Název základního dílu nebo doplňku*", "Cena", "Symbol"])
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setAlternatingRowColors(True)
@@ -65,7 +65,6 @@ class ZakladniDilyDialog(QDialog):
             self.table.setItem(row, 1, QTableWidgetItem(str(r.get("NAZEV", ""))))
             self.table.setItem(row, 2, NumericSortItem(str(r.get("CENA", 0))))
             self.table.setItem(row, 3, QTableWidgetItem(str(r.get("SYMBOL", ""))))
-            self.table.setItem(row, 4, QTableWidgetItem(str(r.get("POZICE", ""))))
         self.table.setSortingEnabled(True)
         self.table.sortByColumn(1, Qt.AscendingOrder)
 
@@ -84,8 +83,7 @@ class ZakladniDilyDialog(QDialog):
         nazev = self.table.item(row, 1).text()
         cena = self.table.item(row, 2).text()
         symbol = self.table.item(row, 3).text() if self.table.item(row, 3) else ""
-        pozice = self.table.item(row, 4).text() if self.table.item(row, 4) else ""
-        dlg = EditDilDialog(self.ctx, kod=kod, nazev=nazev, cena=cena, symbol=symbol, pozice=pozice, is_new=False, parent=self)
+        dlg = EditDilDialog(self.ctx, kod=kod, nazev=nazev, cena=cena, symbol=symbol, is_new=False, parent=self)
         if dlg.exec() == QDialog.Accepted:
             data = dlg.get_data()
             self.ctx.db.update("tsd03", "KOD", int(kod), data)
@@ -113,7 +111,7 @@ class ZakladniDilyDialog(QDialog):
 
 
 class EditDilDialog(QDialog):
-    def __init__(self, ctx=None, kod="", nazev="", cena="0", symbol="", pozice="", is_new=False, parent=None):
+    def __init__(self, ctx=None, kod="", nazev="", cena="0", symbol="", is_new=False, parent=None):
         super().__init__(parent)
         self.ctx = ctx
         self.is_new = is_new
@@ -125,12 +123,10 @@ class EditDilDialog(QDialog):
         self.edit_cena = QLineEdit(str(cena))
         self.edit_symbol = QLineEdit(symbol)
         self.edit_symbol.setMaxLength(1)
-        self.edit_pozice = QLineEdit(pozice)
         layout.addRow("Číslo:", self.edit_kod)
         layout.addRow("Název:", self.edit_nazev)
         layout.addRow("Cena:", self.edit_cena)
         layout.addRow("Symbol:", self.edit_symbol)
-        layout.addRow("Pozice:", self.edit_pozice)
 
         btn_row = QHBoxLayout()
         btn_ok = QPushButton("OK")
@@ -161,5 +157,4 @@ class EditDilDialog(QDialog):
             "NAZEV": self.edit_nazev.text().strip(),
             "CENA": float(self.edit_cena.text() or 0),
             "SYMBOL": self.edit_symbol.text().strip()[:1],
-            "POZICE": self.edit_pozice.text().strip(),
         }

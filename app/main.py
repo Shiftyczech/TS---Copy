@@ -4,6 +4,11 @@ TS Skleníky – main entry point
 import sys
 import os
 
+# Ensure network and Czech encodings are bundled and registered
+import encodings.idna
+import encodings.cp1250
+import encodings.utf_8
+
 # Ensure app package is importable
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(APP_DIR)
@@ -45,6 +50,11 @@ else:
 try:
     from PySide6.QtWidgets import QApplication, QDialog, QPushButton, QTableWidget, QTextEdit, QPlainTextEdit
     from PySide6.QtCore import QFile, QTextStream, QObject, QEvent, Qt, QSettings
+    from PySide6.QtGui import QTextDocument, QPdfWriter
+    try:
+        import PySide6.QtPrintSupport
+    except ImportError:
+        pass
 except ModuleNotFoundError as e:
     missing = getattr(e, "name", "unknown")
     if missing == "PySide6":
@@ -146,15 +156,45 @@ class AppContext:
     def __init__(self, app_dir):
         self.app_dir = app_dir
         self._cache = {}
-        
-        from PySide6.QtCore import QSettings
-        settings = QSettings("TSSkleniky", "TS_Evidence")
-        backend = settings.value("db_backend", "auto")
-        
-        data_dir = os.path.join(app_dir, "DATA")
+        self._init_backend()
+
+    def _init_backend(self):
+        import configparser
+        ini_path = os.path.join(self.app_dir, "db_config.ini")
+        cp = configparser.ConfigParser()
+        if os.path.exists(ini_path):
+            try:
+                cp.read(ini_path, encoding="utf-8")
+            except Exception:
+                pass
+
+        backend = cp.get("database", "backend", fallback=None) if cp.has_section("database") else None
+        if not backend:
+            from PySide6.QtCore import QSettings
+            settings = QSettings("TSSkleniky", "TS_Evidence")
+            backend = settings.value("db_backend", "auto")
+
+        data_dir = os.path.join(self.app_dir, "DATA")
         sqlite_file = os.path.join(data_dir, "ts_data.db")
-        
-        if backend == "sqlite" or (backend == "auto" and os.path.exists(sqlite_file) and os.path.getsize(sqlite_file) > 50000):
+
+        if backend == "mariadb":
+            try:
+                from app.services.mariadb_service import MariaDbService
+                cfg = dict(cp["database"]) if cp.has_section("database") else {}
+                self.db = MariaDbService(
+                    host=cfg.get("host", "10.0.0.20"),
+                    port=int(cfg.get("port", 3306)),
+                    user=cfg.get("user", "root"),
+                    password=cfg.get("password", ""),
+                    database=cfg.get("database", "ts_skleniky")
+                )
+                self.backend_name = "mariadb"
+            except Exception as e:
+                print(f"[AppContext] Chyba připojení k MariaDB ({e}), přepínám na lokální SQLite...")
+                from app.services.sqlite_service import SqliteService
+                self.db = SqliteService(data_dir)
+                self.backend_name = "sqlite"
+        elif backend == "sqlite" or (backend == "auto" and os.path.exists(sqlite_file) and os.path.getsize(sqlite_file) > 50000):
             from app.services.sqlite_service import SqliteService
             self.db = SqliteService(data_dir)
             self.backend_name = "sqlite"
@@ -162,36 +202,75 @@ class AppContext:
             from app.services.dbf_service import DbfService
             self.db = DbfService(data_dir)
             self.backend_name = "dbf"
-            
+
         self.db.on_mutation = self.invalidate_cache
 
+    def close_db(self):
+        """Close active database service and release all locks/handles."""
+        if hasattr(self, "db") and self.db:
+            try:
+                if hasattr(self.db, "close"):
+                    self.db.close()
+            except Exception as e:
+                print(f"[AppContext] Chyba při zavírání DB: {e}")
+            self.db = None
+        self.invalidate_cache()
+
+    def reopen_db(self):
+        """Re-open database service after restore or switch."""
+        self.close_db()
+        self._init_backend()
+        self.invalidate_cache()
+
     def switch_database_backend(self, backend: str):
-        """Switch active database backend ('sqlite' or 'dbf') and clear cache."""
+        """Switch active database backend ('mariadb', 'sqlite' or 'dbf') and clear cache."""
+        import configparser
+        ini_path = os.path.join(self.app_dir, "db_config.ini")
+        cp = configparser.ConfigParser()
+        if os.path.exists(ini_path):
+            try:
+                cp.read(ini_path, encoding="utf-8")
+            except Exception:
+                pass
+        if not cp.has_section("database"):
+            cp.add_section("database")
+        cp.set("database", "backend", backend)
+        try:
+            with open(ini_path, "w", encoding="utf-8") as f:
+                cp.write(f)
+        except Exception:
+            pass
+
         from PySide6.QtCore import QSettings
         settings = QSettings("TSSkleniky", "TS_Evidence")
         settings.setValue("db_backend", backend)
+        self.reopen_db()
+
+    def restart_application(self):
+        """Restart application smoothly."""
+        import sys
+        from PySide6.QtCore import QProcess
+        from PySide6.QtWidgets import QApplication
         
-        data_dir = os.path.join(self.app_dir, "DATA")
-        if backend == "sqlite":
-            from app.services.sqlite_service import SqliteService
-            self.db = SqliteService(data_dir)
-            self.backend_name = "sqlite"
-        else:
-            from app.services.dbf_service import DbfService
-            self.db = DbfService(data_dir)
-            self.backend_name = "dbf"
-            
-        self.db.on_mutation = self.invalidate_cache
-        self.invalidate_cache()
+        self.close_db()
+        QProcess.startDetached(sys.executable, sys.argv)
+        app = QApplication.instance()
+        if app:
+            app.quit()
 
     def get_cached_table(self, table_name: str) -> list[dict]:
-        """Lazy load a table into memory cache."""
-        if table_name not in self._cache:
+        """Lazy load a table into memory cache with 30s TTL for multi-user."""
+        import time
+        now = time.time()
+        entry = self._cache.get(table_name)
+        # Refresh if not cached or if in multi-user mode and older than 30 seconds
+        if entry is None or (getattr(self, "backend_name", "") == "mariadb" and (now - entry.get("_ts", 0)) > 30):
             try:
-                self._cache[table_name] = self.db.read_all(table_name)
+                rows = self.db.read_all(table_name)
+                self._cache[table_name] = {"rows": rows, "_ts": now}
             except Exception:
-                self._cache[table_name] = []
-        return self._cache[table_name]
+                self._cache[table_name] = {"rows": [], "_ts": now}
+        return self._cache[table_name]["rows"]
 
     def get_psc_maps(self) -> tuple[dict[str, str], dict[str, str]]:
         """Return (psc_map, city_map). Lazy loads from tsd01b."""
@@ -244,6 +323,12 @@ def load_stylesheet(app):
 
 
 def main():
+    try:
+        from app.services.github_updater import cleanup_old_executable
+        cleanup_old_executable()
+    except Exception:
+        pass
+
     app = QApplication(sys.argv)
     
     # Load Czech translations for standard Qt dialogs (QMessageBox buttons etc.)

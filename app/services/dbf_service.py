@@ -88,8 +88,7 @@ class DbfService:
                                 table.resize_field(field, 80)
 
                 table.close()
-            except Exception as e:
-                print(f"[DBF] Chyba při kontrole/rozšíření schématu {path}: {e}")
+            except Exception:
                 pass
 
     def _table_path(self, table_name: str) -> str:
@@ -135,6 +134,16 @@ class DbfService:
         try:
             yield self
         finally:
+            for table in self._active_session.values():
+                try:
+                    table.close()
+                except Exception:
+                    pass
+            self._active_session = None
+
+    def close(self):
+        """Close any cached tables in active session."""
+        if self._active_session:
             for table in self._active_session.values():
                 try:
                     table.close()

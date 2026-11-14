@@ -7,6 +7,7 @@ from PySide6.QtCore import Qt
 from app.views.sort_items import DateSortItem, NumericSortItem
 from app.services.document_generator import DocumentGenerator
 from app.services.email_service import EmailService
+from app.utils import format_phone_number
 
 class VlastniOdvozyDialog(QDialog):
     def __init__(self, ctx, parent=None):
@@ -116,7 +117,8 @@ class VlastniOdvozyDialog(QDialog):
             item_pri.setFlags(item_pri.flags() & ~Qt.ItemIsEditable)
             self.table.setItem(row, 2, item_pri)
             
-            item_tel = QTableWidgetItem(str(r.get("TEL", "")))
+            raw_tel = str(r.get("TELEFON", "") or r.get("MOBIL", "")).strip()
+            item_tel = QTableWidgetItem(format_phone_number(raw_tel))
             item_tel.setFlags(item_tel.flags() | Qt.ItemIsEditable)
             self.table.setItem(row, 3, item_tel)
             
@@ -151,7 +153,7 @@ class VlastniOdvozyDialog(QDialog):
         
         field_map = {
             1: "Z_JMENO",
-            3: "TEL",
+            3: "TELEFON",
             4: "E_MAIL"
         }
         db_field = field_map.get(col)
@@ -159,6 +161,12 @@ class VlastniOdvozyDialog(QDialog):
             return
             
         new_val = item.text()
+        if db_field == "TELEFON":
+            new_val = format_phone_number(new_val)
+            self.table.blockSignals(True)
+            item.setText(new_val)
+            self.table.blockSignals(False)
+
         self.ctx.db.update("tsd04", "CISLO_OBJ", cislo, {db_field: new_val})
         self.ctx.invalidate_cache("tsd04")
         if order_data:
@@ -265,31 +273,47 @@ class VlastniOdvozyDialog(QDialog):
         if not selected_rows:
             QMessageBox.warning(self, "Upozornění", "Vyberte alespoň jednu objednávku.")
             return
-            
-        ret = QMessageBox.question(
-            self, 
-            "Potvrzení", 
-            f"Opravdu chcete vyřídit vybrané objednávky ({len(selected_rows)}) a nastavit datum vyřízení na dnešek?",
-            QMessageBox.Yes | QMessageBox.No, 
-            QMessageBox.No
+
+        # Find prefilled initial date (pickup date DATUM_NA from first selected order or today)
+        init_date = None
+        first_cislo = ""
+        for row in selected_rows:
+            item = self.table.item(row, 0)
+            if item:
+                o = item.data(Qt.UserRole)
+                if o:
+                    if not first_cislo:
+                        first_cislo = str(o.get("CISLO_OBJ", ""))
+                    if o.get("DATUM_NA"):
+                        init_date = o.get("DATUM_NA")
+                        break
+        if not init_date:
+            init_date = datetime.date.today()
+
+        from app.views.datum_vyrizeni_dialog import DatumVyrizeniDialog
+        info = f"Objednávka č. {first_cislo}" if len(selected_rows) == 1 else f"Vybráno {len(selected_rows)} objednávek"
+        dlg = DatumVyrizeniDialog(
+            parent=self,
+            title="Vyřídit objednávku",
+            prompt="Zadejte datum vyřízení:",
+            initial_date=init_date,
+            info_text=info
         )
-        
-        if ret != QMessageBox.Yes:
+        if dlg.exec() != QDialog.Accepted:
             return
-            
-        today = datetime.date.today()
+
+        chosen_date = dlg.selected_date()
         updates_to_apply = {}
-        
         for row in selected_rows:
             item = self.table.item(row, 0)
             o = item.data(Qt.UserRole)
             cislo = str(o.get("CISLO_OBJ", ""))
-            updates_to_apply[cislo] = {"DATUM_VYR": today}
+            updates_to_apply[cislo] = {"DATUM_VYR": chosen_date}
             
         if updates_to_apply:
             self.ctx.db.batch_update("tsd04", "CISLO_OBJ", updates_to_apply)
             self.ctx.invalidate_cache("tsd04")
-            QMessageBox.information(self, "Úspěch", f"Úspěšně vyřízeno {len(selected_rows)} objednávek.")
+            QMessageBox.information(self, "Úspěch", f"Úspěšně vyřízeno {len(selected_rows)} objednávek k datu {chosen_date.strftime('%d.%m.%Y')}.")
             self._load_data()
 
     def _change_pickup_date(self):

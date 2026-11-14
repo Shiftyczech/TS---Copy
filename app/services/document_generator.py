@@ -28,14 +28,17 @@ class DocumentGenerator:
     # Public API
     # ------------------------------------------------------------------
 
-    def generate_order(self, cislo_obj, table="tsd04", items_table=None, short_format=False, force_creation_text=False):
+    def generate_order(self, cislo_obj, table="tsd04", items_table=None, short_format=False, force_creation_text=False, prefer_delivery=None):
         """Generate order confirmation HTML."""
-        print(f"[DEBUG_GEN] generate_order called. cislo_obj={cislo_obj}, table={table}, items_table={items_table}")
+        print(f"[DEBUG_GEN] generate_order called. cislo_obj={cislo_obj}, table={table}, items_table={items_table}, prefer_delivery={prefer_delivery}")
         if not items_table:
             items_table = f"{table}a"
         order = self._get_order(cislo_obj, table)
         print(f"[DEBUG_GEN] Order loaded: {bool(order)}, CENA_CELK={order.get('CENA_CELK')}, PLAN={repr(order.get('PLAN'))}")
         cfg = self.ctx.db.get_first_record("tsd00") or {}
+
+        if prefer_delivery is None:
+            prefer_delivery = False
 
         zmena = order.get("ZMENA") and order.get("DATUM_ZM") is not None
         if force_creation_text:
@@ -94,8 +97,8 @@ class DocumentGenerator:
                     f"{sender_name}"
                 )
                 
-        text_mail = self.replace_text_placeholders(text_mail, cislo_obj, table)
-        text_pole1 = self.replace_text_placeholders(text_pole1, cislo_obj, table)
+        text_mail = self.replace_text_placeholders(text_mail, cislo_obj, table, prefer_delivery=prefer_delivery)
+        text_pole1 = self.replace_text_placeholders(text_pole1, cislo_obj, table, prefer_delivery=prefer_delivery)
 
         # Normalize newlines: remove excessive empty lines to save space
         text_pole1 = re.sub(r'(\r?\n){3,}', '\n\n', text_pole1)
@@ -107,7 +110,7 @@ class DocumentGenerator:
         except (ValueError, TypeError):
             cislo_fmt = str(cislo_obj).strip().zfill(6)
 
-        eff_addr = get_effective_address(order)
+        eff_addr = get_effective_address(order, prefer_delivery=prefer_delivery)
         replacements = {
             "«Cislo_Obj»": cislo_fmt,
             "«Číslo objednávky»": cislo_fmt,
@@ -118,7 +121,7 @@ class DocumentGenerator:
             "«D_Ulice»": self._s(cfg, "ULICE"),
             "«D_PSC»": self._s(cfg, "PSC"),
             "«D_Obec»": self._s(cfg, "OBEC"),
-            "«D_Telefon»": self._s(cfg, "TELEFON"),
+            "«D_Telefon»": format_phone_number(self._s(cfg, "TELEFON")),
             "«Dodat_po»": self._fmt_date(order.get("DATUM_PO")),
             "«D_ICO»": self._s(cfg, "ICO"),
             # Customer (Objednatel - preferred delivery address with fallback to billing)
@@ -215,7 +218,7 @@ class DocumentGenerator:
             "«D_Ulice»": self._s(cfg, "ULICE"),
             "«D_PSC»": self._s(cfg, "PSC"),
             "«D_Obec»": self._s(cfg, "OBEC"),
-            "«D_Telefon»": self._s(cfg, "TELEFON"),
+            "«D_Telefon»": format_phone_number(self._s(cfg, "TELEFON")),
             "«Dodat_po»": self._fmt_date(order.get("DATUM_PO")),
             "«D_ICO»": self._s(cfg, "ICO"),
             "«O_Jmeno»": html_lib.escape(eff_addr["jmeno"]),
@@ -251,7 +254,7 @@ class DocumentGenerator:
         html = html.replace("JIŘÍ", "DANIEL")
         
         return html
-    def replace_text_placeholders(self, text, cislo_obj, table="tsd04"):
+    def replace_text_placeholders(self, text, cislo_obj, table="tsd04", prefer_delivery=None):
         """Replace placeholders like «Cislo_Obj» or <<Cislo_Obj>> in text."""
         if not text:
             return text
@@ -269,15 +272,18 @@ class DocumentGenerator:
         route = None
         if trasa_cislo:
             route = self.ctx.db.read_by_key("tsd05", "CISLO", trasa_cislo)
+
+        if prefer_delivery is None:
+            prefer_delivery = False
         
-        eff_addr = get_effective_address(order)
+        eff_addr = get_effective_address(order, prefer_delivery=prefer_delivery)
         reps = {
             "Cislo_Obj": cislo_fmt,
             "Číslo objednávky": cislo_fmt,
             "Datum výzvy": self._fmt_date(route.get("DATUM")) if route else self._fmt_date(order.get("DATUM_NA")),
             "Cena": f"{cena} Kč",
             "D_Nazev1": self._s(cfg, "NAZEV1"),
-            "D_Telefon": self._s(cfg, "TELEFON"),
+            "D_Telefon": format_phone_number(self._s(cfg, "TELEFON")),
             "O_Jmeno": eff_addr["jmeno"],
             "O_Ulice": eff_addr["ulice"],
             "O_PSC": eff_addr["psc"],
@@ -350,9 +356,7 @@ class DocumentGenerator:
         except Exception:
             all_details = []
             
-        print(f"[DEBUG_GEN] all_details loaded for {cislo_obj}: {len(all_details)}")
-        for i, d in enumerate(all_details):
-            print(f"  DB detail {i}: KOD={d.get('KOD')}, NAZEV={repr(d.get('NAZEV'))}, CENA={d.get('CENA')}, FINAL={d.get('FINAL')}")
+
 
         def safe_int(val, default=0):
             try:
@@ -363,6 +367,24 @@ class DocumentGenerator:
             except (ValueError, TypeError):
                 return default
 
+        # Pre-load all assembly parts from tsd02a once to avoid repeated DB scans and fast lookup
+        try:
+            all_tsd02a = self.ctx.db.read_all("tsd02a")
+            all_kit_glass_kods = {int(float(p.get("KOD", 0) or 0)) for p in all_tsd02a}
+        except Exception:
+            all_tsd02a = []
+        # Build recipe quotas: { (assembly_kod, part_kod): max_free_qty }
+        recipe_quotas = {}
+        for it in items:
+            kod = int(it.get("KOD", 0) or 0)
+            mnoz = int(float(it.get("MNOZSTVI", 1) or 1))
+            for p in all_tsd02a:
+                if safe_int(p.get("FINAL", 0)) == kod:
+                    pk = int(float(p.get("KOD", 0) or 0))
+                    pm = int(float(p.get("MNOZSTVI", 1) or 1))
+                    recipe_quotas[(kod, pk)] = recipe_quotas.get((kod, pk), 0) + (pm * mnoz)
+
+        total_sum = 0
         for it in items:
             nazev = self._s(it, "NAZEV")
             cena = int(float(it.get("CENA", 0) or 0))
@@ -378,8 +400,10 @@ class DocumentGenerator:
                 f'<TD ALIGN="RIGHT"><FONT SIZE=2>{self._fmt_num(celk)}</FONT></TD></TR>'
             )
 
+            total_sum += celk
             # Shipping row for this product
             if dopravne > 0:
+                total_sum += dopravne * mnoz
                 rows.append(
                     f'<TR><TD ALIGN="LEFT" HEIGHT=20><FONT SIZE=2>'
                     f'&nbsp;&nbsp;&nbsp;&nbsp;dopravné</FONT></TD>'
@@ -390,12 +414,6 @@ class DocumentGenerator:
 
             # Linked accessories from detail table (tsd06b/tsd04b)
             kod = int(it.get("KOD", 0) or 0)
-            
-            try:
-                assembly_parts = self.ctx.db.read_where("tsd02a", {"FINAL": kod})
-                glass_kods = {int(float(p.get("KOD", 0) or 0)) for p in assembly_parts}
-            except Exception:
-                glass_kods = set()
             
             def get_final_int(d):
                 try:
@@ -413,14 +431,38 @@ class DocumentGenerator:
             for d in details:
                 printed_details.add(id(d))
                 d_kod = int(float(d.get("KOD", 0) or 0))
-                is_glass = d_kod in glass_kods
-                
+                typ_dilu = str(d.get("TYPDILU", "") or "").strip().upper()
                 d_nazev = self._s(d, "NAZEV")
                 d_cena = safe_int(d.get("CENA", 0), 0)
                 d_mnoz = safe_int(d.get("MNOZSTVI", 1), 1)
+
+                # Standard assembly kit glass is skipped from printing (included in assembly price)
+                # Extra glass beyond the recipe quota MUST be printed!
+                if typ_dilu == 'D':
+                    is_kit_glass = False
+                elif typ_dilu == 'S':
+                    is_kit_glass = True
+                elif (kod, d_kod) in recipe_quotas:
+                    avail = recipe_quotas[(kod, d_kod)]
+                    if avail >= d_mnoz:
+                        recipe_quotas[(kod, d_kod)] -= d_mnoz
+                        is_kit_glass = True
+                    elif avail > 0:
+                        extra_qty = d_mnoz - avail
+                        recipe_quotas[(kod, d_kod)] = 0
+                        d_mnoz = extra_qty
+                        is_kit_glass = False
+                    else:
+                        is_kit_glass = False
+                elif d_kod in all_kit_glass_kods and d_cena == 0:
+                    is_kit_glass = True
+                else:
+                    is_kit_glass = False
+
                 d_celk = d_cena * d_mnoz
-                if is_glass or d_celk == 0:
+                if is_kit_glass or d_celk == 0:
                     continue
+                total_sum += d_celk
                 rows.append(
                     f'<TR><TD ALIGN="LEFT" HEIGHT=20><FONT SIZE=2>'
                     f'&nbsp;&nbsp;&nbsp;&nbsp;{d_nazev}</FONT></TD>'
@@ -429,17 +471,25 @@ class DocumentGenerator:
                     f'<TD ALIGN="RIGHT"><FONT SIZE=2>{self._fmt_num(d_celk)}</FONT></TD></TR>'
                 )
 
-        print(f"[DEBUG_GEN] Printing unlinked accessories...")
         # Unlinked accessories from detail table
         for d in all_details:
             if id(d) not in printed_details:
+                d_kod = int(float(d.get("KOD", 0) or 0))
+                typ_dilu = str(d.get("TYPDILU", "") or "").strip().upper()
                 d_nazev = self._s(d, "NAZEV")
                 d_cena = safe_int(d.get("CENA", 0), 0)
                 d_mnoz = safe_int(d.get("MNOZSTVI", 1), 1)
                 d_celk = d_cena * d_mnoz
-                print(f"  Unlinked: {d_nazev}, cena={d_cena}, mnoz={d_mnoz}, celk={d_celk}")
-                if d_celk == 0:
+
+                # Skip any kit glass even if unlinked
+                if typ_dilu == 'S' or (typ_dilu != 'D' and d_kod in all_kit_glass_kods and d_cena == 0):
+                    is_kit_glass = True
+                else:
+                    is_kit_glass = False
+
+                if is_kit_glass or d_celk == 0:
                     continue
+                total_sum += d_celk
                 rows.append(
                     f'<TR><TD ALIGN="LEFT" HEIGHT=20><FONT SIZE=2>'
                     f'&nbsp;&nbsp;{d_nazev}</FONT></TD>'
@@ -448,8 +498,8 @@ class DocumentGenerator:
                     f'<TD ALIGN="RIGHT"><FONT SIZE=2>{self._fmt_num(d_celk)}</FONT></TD></TR>'
                 )
 
-        # Totals row
-        celkem = safe_int(order.get("CENA_CELK", 0), 0)
+        # Totals row - exact sum of all printed items
+        celkem = total_sum
         rows.append(
             f'<TR><TD ALIGN="RIGHT" HEIGHT=20 COLSPAN=3><FONT SIZE=2><B>Celkem</B>'
             f'<TD ALIGN="RIGHT"><FONT SIZE=2><B>{self._fmt_num(celkem)}</B></FONT></TD></TR>'

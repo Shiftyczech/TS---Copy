@@ -429,13 +429,17 @@ class BackupDialog(QDialog):
     #  SHARED WORKER
     # ════════════════════════════════════════════════════════════
     def _start_worker(self, action, path=None):
+        if action in ("restore_local", "restore_gdrive"):
+            if hasattr(self.ctx, "close_db"):
+                self.ctx.close_db()
+
         svc = self._get_svc()
         self.worker = BackupWorker(svc, action, path)
         self.worker.progress.connect(self._on_progress)
         self.worker.finished.connect(self._on_finished)
         self.progress.setVisible(True)
         self.progress.setValue(0)
-        self.lbl_status.setText("Prob\u00edh\u00e1 operace...")
+        self.lbl_status.setText("Probíhá operace...")
         self._set_buttons_enabled(False)
         self.worker.start()
 
@@ -446,11 +450,36 @@ class BackupDialog(QDialog):
         self.progress.setVisible(False)
         self._set_buttons_enabled(True)
         self.lbl_status.setText(msg)
+        action = getattr(self.worker, "action", "")
+
         if ok:
-            QMessageBox.information(self, "Záloha", msg)
-            self._refresh_backup_list()
-            self._refresh_gdrive_status()
+            if action in ("restore_local", "restore_gdrive"):
+                self._refresh_backup_list()
+                self._refresh_gdrive_status()
+                reply = QMessageBox.question(
+                    self,
+                    "Obnova dokončena",
+                    "Obnova databáze proběhla úspěšně!\n\n"
+                    "Pro správné načtení všech obnovených dat se doporučuje aplikaci restartovat.\n\n"
+                    "Chcete aplikaci restartovat nyní?",
+                    QMessageBox.Yes | QMessageBox.No
+                )
+                if reply == QMessageBox.Yes:
+                    self.accept()
+                    if hasattr(self.ctx, "restart_application"):
+                        self.ctx.restart_application()
+                    return
+                else:
+                    if hasattr(self.ctx, "reopen_db"):
+                        self.ctx.reopen_db()
+            else:
+                QMessageBox.information(self, "Záloha", msg)
+                self._refresh_backup_list()
+                self._refresh_gdrive_status()
         else:
+            if action in ("restore_local", "restore_gdrive"):
+                if hasattr(self.ctx, "reopen_db"):
+                    self.ctx.reopen_db()
             QMessageBox.warning(self, "Chyba", msg)
 
     def _set_buttons_enabled(self, enabled):

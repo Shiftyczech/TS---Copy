@@ -1,0 +1,160 @@
+"""
+GitHub Releases Auto-Updater for TS Skleníky.
+Checks for latest release on GitHub, downloads the new .exe, and seamlessly restarts the application.
+"""
+import os
+import sys
+import json
+import urllib.request
+import urllib.error
+from typing import Optional, Callable
+from app.version import APP_VERSION, GITHUB_REPO
+
+
+def parse_version(v_str: str) -> tuple[int, ...]:
+    """Parse semver string like 'v1.2.3' or '1.2' to integer tuple for comparison."""
+    clean = v_str.strip().lstrip("vV")
+    parts = []
+    for p in clean.split("."):
+        try:
+            parts.append(int(p))
+        except ValueError:
+            break
+    return tuple(parts) if parts else (0,)
+
+
+def cleanup_old_executable():
+    """Remove leftover .old executable from previous update if present."""
+    if not getattr(sys, "frozen", False):
+        return
+    old_exe = sys.executable + ".old"
+    if os.path.isfile(old_exe):
+        try:
+            os.remove(old_exe)
+        except Exception:
+            pass
+
+
+class UpdateInfo:
+    def __init__(self, has_update: bool, latest_version: str, download_url: str,
+                 asset_name: str, asset_size: int, release_notes: str = ""):
+        self.has_update = has_update
+        self.latest_version = latest_version
+        self.download_url = download_url
+        self.asset_name = asset_name
+        self.asset_size = asset_size
+        self.release_notes = release_notes
+
+
+def check_for_updates() -> UpdateInfo:
+    """Check GitHub API for the latest release."""
+    api_url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+    req = urllib.request.Request(
+        api_url,
+        headers={
+            "User-Agent": "TS-Evidence-Skleniky",
+            "Accept": "application/vnd.github.v3+json"
+        }
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            if resp.status != 200:
+                return UpdateInfo(False, APP_VERSION, "", "", 0)
+            data = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        # Offline or repository has no releases yet
+        return UpdateInfo(False, APP_VERSION, "", "", 0)
+
+    tag = data.get("tag_name", "")
+    latest_ver = tag.lstrip("vV").strip()
+    notes = data.get("body", "")
+
+    # Compare versions
+    if parse_version(latest_ver) <= parse_version(APP_VERSION):
+        return UpdateInfo(False, latest_ver, "", "", 0, notes)
+
+    # Find .exe asset
+    assets = data.get("assets", [])
+    target_asset = None
+    for a in assets:
+        name = a.get("name", "").lower()
+        if name.endswith(".exe"):
+            target_asset = a
+            # Prefer matching "evidence" in name
+            if "evidence" in name:
+                break
+
+    if not target_asset:
+        return UpdateInfo(False, latest_ver, "", "", 0, notes)
+
+    dl_url = target_asset.get("browser_download_url", "")
+    size = target_asset.get("size", 0)
+    asset_name = target_asset.get("name", "EvidenceSkleniku.exe")
+
+    return UpdateInfo(
+        has_update=True,
+        latest_version=latest_ver,
+        download_url=dl_url,
+        asset_name=asset_name,
+        asset_size=size,
+        release_notes=notes
+    )
+
+
+def download_and_install_update(download_url: str, progress_callback: Optional[Callable[[int], None]] = None) -> bool:
+    """Download new executable and swap with current running executable."""
+    if not getattr(sys, "frozen", False):
+        raise RuntimeError("Aktualizace je dostupná pouze pro zkompilovanou .exe aplikaci.")
+
+    target_exe = sys.executable
+    app_dir = os.path.dirname(target_exe)
+    temp_new_exe = os.path.join(app_dir, "_new_version.tmp")
+
+    req = urllib.request.Request(
+        download_url,
+        headers={"User-Agent": "TS-Evidence-Skleniky"}
+    )
+
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        total_size = int(resp.headers.get("Content-Length", 0))
+        downloaded = 0
+        chunk_size = 64 * 1024
+
+        with open(temp_new_exe, "wb") as f:
+            while True:
+                chunk = resp.read(chunk_size)
+                if not chunk:
+                    break
+                f.write(chunk)
+                downloaded += len(chunk)
+                if total_size > 0 and progress_callback:
+                    pct = int((downloaded / total_size) * 100)
+                    progress_callback(min(pct, 99))
+
+    if progress_callback:
+        progress_callback(100)
+
+    # Atomic swap on Windows: rename running .exe to .old, move .tmp into place
+    old_exe = target_exe + ".old"
+    if os.path.exists(old_exe):
+        try:
+            os.remove(old_exe)
+        except Exception:
+            pass
+
+    os.rename(target_exe, old_exe)
+    os.rename(temp_new_exe, target_exe)
+
+    # Launch new process and exit current
+    from PySide6.QtCore import QProcess
+    from PySide6.QtWidgets import QApplication
+
+    QProcess.startDetached(target_exe, sys.argv[1:])
+    app = QApplication.instance()
+    if app:
+        app.quit()
+    else:
+        sys.exit(0)
+
+    return True

@@ -8,14 +8,15 @@ from PySide6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QCheckBox, QRadioButton, QComboBox,
     QGroupBox, QButtonGroup, QDateEdit, QTableWidget, QTableWidgetItem,
     QTextEdit, QHeaderView, QMessageBox, QFrame, QAbstractItemView,
-    QCompleter
+    QCompleter, QMenu
 )
 from PySide6.QtCore import Qt, QDate, QStringListModel, QThread, Signal
 from PySide6.QtGui import QColor, QBrush
 from datetime import date, datetime
 from app.views.sort_items import NumericSortItem
 from app.views.date_line_edit import DateLineEdit
-from app.utils import format_phone_number
+from app.views.phone_line_edit import PhoneLineEdit
+from app.utils import format_phone_number, get_free_order_numbers
 
 
 
@@ -40,8 +41,15 @@ class ObjednavkaDialog(QDialog):
         if cislo_obj:
             self._load_data(cislo_obj)
         else:
-            auto_num = self._generate_cislo_obj()
-            self.edit_cislo_obj.setPlaceholderText(f"Auto ({auto_num})")
+            auto_num, self._free_numbers = get_free_order_numbers(self.ctx)
+            self.edit_cislo_obj.setText(str(auto_num))
+            self.edit_cislo_obj.selectAll()
+            if self._free_numbers:
+                self.btn_volna_cisla.setVisible(True)
+                self.btn_volna_cisla.setText(f"Volná čísla ({len(self._free_numbers)}) ▼")
+                self.btn_volna_cisla.clicked.connect(self._show_volna_cisla_menu)
+                self.lbl_volna_info.setText("💡 Uvolněné číslo (po zrušené objednávce)")
+                self.lbl_volna_info.setVisible(True)
 
         from PySide6.QtWidgets import QApplication
         QApplication.instance().installEventFilter(self)
@@ -106,9 +114,21 @@ class ObjednavkaDialog(QDialog):
         top_bar.addWidget(QLabel("Číslo obj.:"))
         self.edit_cislo_obj = QLineEdit()
         self.edit_cislo_obj.setPlaceholderText("Auto")
-        self.edit_cislo_obj.setMaximumWidth(150)
+        self.edit_cislo_obj.setMaximumWidth(120)
         self.edit_cislo_obj.setStyleSheet("font-weight: bold;")
         top_bar.addWidget(self.edit_cislo_obj)
+
+        self.btn_volna_cisla = QPushButton("Volná čísla ▼")
+        self.btn_volna_cisla.setVisible(False)
+        self.btn_volna_cisla.setCursor(Qt.PointingHandCursor)
+        self.btn_volna_cisla.setStyleSheet("font-weight: bold; padding: 3px 8px;")
+        top_bar.addWidget(self.btn_volna_cisla)
+
+        self.lbl_volna_info = QLabel("")
+        self.lbl_volna_info.setStyleSheet("color: #E65100; font-weight: bold; margin-left: 10px;")
+        self.lbl_volna_info.setVisible(False)
+        top_bar.addWidget(self.lbl_volna_info)
+
         top_bar.addStretch()
         layout.addLayout(top_bar)
 
@@ -243,11 +263,11 @@ class ObjednavkaDialog(QDialog):
         # Contact row: Telefon | Mobil | Email
         contact_row = QHBoxLayout()
         contact_row.addWidget(QLabel("Telefon:"))
-        self.edit_telefon = QLineEdit()
+        self.edit_telefon = PhoneLineEdit()
         self.edit_telefon.setMaximumWidth(150)
         contact_row.addWidget(self.edit_telefon)
         contact_row.addWidget(QLabel("Mobil:"))
-        self.edit_mobil = QLineEdit()
+        self.edit_mobil = PhoneLineEdit()
         self.edit_mobil.setMaximumWidth(150)
         contact_row.addWidget(self.edit_mobil)
         contact_row.addWidget(QLabel("Email:"))
@@ -1011,26 +1031,28 @@ class ObjednavkaDialog(QDialog):
                 cislo,
                 table=self.source_table,
                 items_table=items_table,
-                force_creation_text=True
+                force_creation_text=True,
+                prefer_delivery=False
             )
             open_html_in_browser(html, f"Objednavka_{cislo}")
         except Exception as e:
             QMessageBox.warning(self, "Chyba tisku", str(e))
 
     # ===================== Save / Load =====================
+    def _show_volna_cisla_menu(self):
+        if not hasattr(self, "_free_numbers") or not self._free_numbers:
+            QMessageBox.information(self, "Volná čísla", "Žádná další uvolněná čísla nejsou k dispozici.")
+            return
+        menu = QMenu(self)
+        for num in self._free_numbers:
+            action = menu.addAction(f"Číslo {num}")
+            action.triggered.connect(lambda checked=False, n=num: self.edit_cislo_obj.setText(str(n)))
+        menu.exec(self.btn_volna_cisla.mapToGlobal(self.btn_volna_cisla.rect().bottomLeft()))
+
     def _generate_cislo_obj(self) -> str:
-        """Generate the next available order number by finding max across both tables."""
-        max_num = 0
-        for table_name in ("tsd04", "tsd06"):
-            try:
-                raw = self.ctx.db.get_max_value(table_name, "CISLO_OBJ")
-                if raw is not None and str(raw).strip():
-                    num = int(float(str(raw).strip()))
-                    if num > max_num:
-                        max_num = num
-            except (ValueError, TypeError):
-                pass
-        return str(max_num + 1)
+        """Generate the lowest available order number (filling gaps from deleted orders)."""
+        next_num, _ = get_free_order_numbers(self.ctx)
+        return str(next_num)
 
     def _collect_data(self) -> dict:
         data = {}
@@ -1203,7 +1225,46 @@ class ObjednavkaDialog(QDialog):
                         )
                         return
 
+        cislo_to_save = str(data.get("CISLO_OBJ", "")).strip()
+        if not cislo_to_save:
+            QMessageBox.warning(self, "Chyba", "Číslo objednávky musí být vyplněno.")
+            return
+
         is_new = self.mode == "new"
+        old_cislo = str(self.cislo_obj).strip() if self.cislo_obj else None
+
+        # Check for duplicate order number if new order or changing order number
+        if is_new or (old_cislo and cislo_to_save != old_cislo):
+            existing_active = self.ctx.db.read_by_key("tsd04", "CISLO_OBJ", cislo_to_save)
+            existing_arch = self.ctx.db.read_by_key("tsd06", "CISLO_OBJ", cislo_to_save)
+
+            conflict = None
+            where_conflict = ""
+            if existing_active and (is_new or str(existing_active.get("CISLO_OBJ", "")).strip() != old_cislo):
+                conflict = existing_active
+                where_conflict = "aktivních objednávkách"
+            elif existing_arch:
+                conflict = existing_arch
+                where_conflict = "archivu objednávek"
+
+            if conflict:
+                cust_name = conflict.get("Z_JMENO") or conflict.get("U_JMENO") or "Neznámý zákazník"
+                rec_next, _ = get_free_order_numbers(self.ctx)
+                reply = QMessageBox.warning(
+                    self,
+                    "Duplicitní číslo objednávky",
+                    f"Objednávka s číslem {cislo_to_save} již existuje v {where_conflict}!\n"
+                    f"Zákazník: {cust_name}\n\n"
+                    f"Nelze uložit duplicitní číslo objednávky.\n\n"
+                    f"Chcete automaticky dosadit nejbližší volné číslo {rec_next}?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.Yes
+                )
+                if reply == QMessageBox.Yes:
+                    self.edit_cislo_obj.setText(str(rec_next))
+                    self.edit_cislo_obj.setFocus()
+                    self.edit_cislo_obj.selectAll()
+                return
 
         if not is_new and send_now and not force_new_email:
             data["ZMENA"] = True
@@ -1308,13 +1369,17 @@ class ObjednavkaDialog(QDialog):
                     kod_int = int(kod_str or 0)
                 except (ValueError, TypeError):
                     kod_int = 0
+                is_glass = bool(p.get("is_glass", False))
+                typdilu = 'S' if is_glass else 'D'
+                cena_val = 0.0 if is_glass else float(cena_str or 0)
                 dily_rows.append({
                     "CISLO_OBJ": self.cislo_obj,
                     "FINAL": final_kod,
                     "KOD": kod_int,
                     "NAZEV": str(p.get("nazev", "")),
-                    "CENA": float(cena_str or 0),
+                    "CENA": cena_val,
                     "MNOZSTVI": mnozstvi,
+                    "TYPDILU": typdilu,
                 })
 
         print(f"[DEBUG_SAVE] Collected sestavy: {len(sestavy_rows)}, dily: {len(dily_rows)}")
@@ -1422,14 +1487,25 @@ class ObjednavkaDialog(QDialog):
 
         # Load the glass items cache for each assembly from tsd02a
         # so we can mark which loaded parts are glass
-        glass_kods_per_sestava = {}  # {sestava_kod: set of part KODs from tsd02a}
+        # Build recipe quotas: { (assembly_kod, part_kod): max_free_qty }
+        recipe_quotas = {}
         for s in sestavy:
             s_kod = int(float(s.get("KOD", 0) or 0))
+            mnoz = int(float(s.get("MNOZSTVI", 1) or 1))
             try:
                 assembly_parts = self.ctx.db.read_where("tsd02a", {"FINAL": s_kod})
-                glass_kods_per_sestava[s_kod] = {int(float(p.get("KOD", 0) or 0)) for p in assembly_parts}
+                for p in assembly_parts:
+                    pk = int(float(p.get("KOD", 0) or 0))
+                    pm = int(float(p.get("MNOZSTVI", 1) or 1))
+                    recipe_quotas[(s_kod, pk)] = recipe_quotas.get((s_kod, pk), 0) + (pm * mnoz)
             except Exception:
-                glass_kods_per_sestava[s_kod] = set()
+                pass
+
+        try:
+            all_tsd02a = self.ctx.db.read_all("tsd02a")
+            all_kit_glass_kods = {int(float(p.get("KOD", 0) or 0)) for p in all_tsd02a}
+        except Exception:
+            all_kit_glass_kods = set()
 
         # Group díly by FINAL (assembly KOD)
         dily_by_final = {}  # {final_kod: [dily_records]}
@@ -1475,7 +1551,6 @@ class ObjednavkaDialog(QDialog):
             self.tbl_sestavy.setItem(row, 5, QTableWidgetItem(str(uid)))
 
             # Build parts list for this greenhouse
-            glass_kods = glass_kods_per_sestava.get(s_kod, set())
             linked_parts = dily_by_final.get(s_kod, [])
             parts_list = []
             for d in linked_parts:
@@ -1485,11 +1560,41 @@ class ObjednavkaDialog(QDialog):
                     mnoz = 1
                 else:
                     mnoz = int(float(mnoz))
-                is_glass = d_kod in glass_kods
+                typ_dilu = str(d.get("TYPDILU", "") or "").strip().upper()
+                raw_cena = d.get("CENA")
+                try:
+                    cena_val = float(raw_cena) if raw_cena not in (None, "") else 0.0
+                except (ValueError, TypeError):
+                    cena_val = 0.0
+
+                # Determine if item is standard kit glass (included in assembly price)
+                # Extra glass beyond recipe quota is a paid accessory
+                if typ_dilu == 'S':
+                    is_glass = True
+                    part_cena = "0"
+                elif typ_dilu == 'D':
+                    is_glass = False
+                    part_cena = str(int(cena_val) if cena_val.is_integer() else cena_val)
+                elif (s_kod, d_kod) in recipe_quotas:
+                    avail = recipe_quotas[(s_kod, d_kod)]
+                    if avail >= mnoz:
+                        recipe_quotas[(s_kod, d_kod)] -= mnoz
+                        is_glass = True
+                        part_cena = "0"
+                    else:
+                        is_glass = False
+                        part_cena = str(int(cena_val) if cena_val.is_integer() else cena_val)
+                elif d_kod in all_kit_glass_kods and cena_val == 0:
+                    is_glass = True
+                    part_cena = "0"
+                else:
+                    is_glass = False
+                    part_cena = str(int(cena_val) if cena_val.is_integer() else cena_val)
+
                 parts_list.append({
                     "kod": str(d.get("KOD") or ""),
                     "nazev": str(d.get("NAZEV") or ""),
-                    "cena": str(d.get("CENA") or 0),
+                    "cena": part_cena,
                     "pocet": str(mnoz),
                     "is_glass": is_glass,
                 })
@@ -1502,25 +1607,40 @@ class ObjednavkaDialog(QDialog):
                     mnoz = 1
                 else:
                     mnoz = int(float(mnoz))
+                typ_dilu = str(d.get("TYPDILU", "") or "").strip().upper()
+                raw_cena = d.get("CENA")
+                try:
+                    cena_val = float(raw_cena) if raw_cena not in (None, "") else 0.0
+                except (ValueError, TypeError):
+                    cena_val = 0.0
+
+                if typ_dilu == 'S' or (typ_dilu != 'D' and d_kod in all_kit_glass_kods and cena_val == 0):
+                    is_glass = True
+                    part_cena = "0"
+                else:
+                    is_glass = False
+                    part_cena = str(int(cena_val) if cena_val.is_integer() else cena_val)
+
                 parts_list.append({
                     "kod": str(d.get("KOD") or ""),
                     "nazev": str(d.get("NAZEV") or ""),
-                    "cena": str(d.get("CENA") or 0),
+                    "cena": part_cena,
                     "pocet": str(mnoz),
-                    "is_glass": False,
+                    "is_glass": is_glass,
                 })
 
             # If no glass items were loaded from DB, auto-load from tsd02a
             has_glass = any(p["is_glass"] for p in parts_list)
-            if not has_glass and glass_kods:
+            if not has_glass:
                 glass_from_def = self._load_glass_for_sestava(s_kod)
-                if mnozstvi_sestavy > 1:
-                    for gp in glass_from_def:
-                        try:
-                            gp["pocet"] = str(int(float(gp["pocet"]) * mnozstvi_sestavy))
-                        except Exception:
-                            pass
-                parts_list = glass_from_def + parts_list
+                if glass_from_def:
+                    if mnozstvi_sestavy > 1:
+                        for gp in glass_from_def:
+                            try:
+                                gp["pocet"] = str(int(float(gp["pocet"]) * mnozstvi_sestavy))
+                            except Exception:
+                                pass
+                    parts_list = glass_from_def + parts_list
 
             self._dily_per_sestava[uid] = parts_list
 
