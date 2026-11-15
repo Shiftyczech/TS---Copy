@@ -27,7 +27,7 @@ class ArchivZpetnyDialog(QDialog):
         layout.setContentsMargins(8, 8, 8, 8)
 
         lbl = QLabel("Vyberte objednávky k převodu zpět")
-        lbl.setObjectName("titleLabel")
+        lbl.setObjectName("dialogTitle")
         lbl.setAlignment(Qt.AlignCenter)
         layout.addWidget(lbl)
 

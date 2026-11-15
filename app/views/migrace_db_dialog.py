@@ -57,7 +57,7 @@ class MigraceDbDialog(QDialog):
         layout.setContentsMargins(16, 16, 16, 16)
 
         title = QLabel("Převod databáze do SQLite")
-        title.setObjectName("titleLabel")
+        title.setObjectName("dialogTitle")
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
 

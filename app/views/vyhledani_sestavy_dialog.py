@@ -24,7 +24,7 @@ class VyhledaniSestavyDialog(QDialog):
         layout = QVBoxLayout(self)
 
         lbl = QLabel("Vyhledání sestavy")
-        lbl.setObjectName("titleLabel")
+        lbl.setObjectName("dialogTitle")
         lbl.setAlignment(Qt.AlignCenter)
         layout.addWidget(lbl)
 

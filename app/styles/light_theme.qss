@@ -27,6 +27,14 @@ QLabel#titleLabel {
     letter-spacing: 4px;
 }
 
+QLabel#dialogTitle {
+    font-size: 19px;
+    font-weight: bold;
+    color: #E67E22;
+    letter-spacing: 0.5px;
+    padding: 2px 0px 4px 0px;
+}
+
 QLabel#subtitleLabel {
     font-size: 52px;
     font-weight: bold;
@@ -118,7 +126,8 @@ QLineEdit {
     color: #2C303A;
     border: 1px solid #CED4DA;
     border-radius: 4px;
-    padding: 6px 8px;
+    padding: 4px 8px;
+    min-height: 26px;
     selection-background-color: #27AE60;
 }
 
@@ -205,6 +214,7 @@ QSpinBox, QDoubleSpinBox {
     border: 1px solid #CED4DA;
     border-radius: 4px;
     padding: 4px 8px;
+    min-height: 26px;
 }
 
 /* ----- Check Box ----- */

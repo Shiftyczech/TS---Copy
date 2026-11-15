@@ -36,7 +36,7 @@ class VyhledaniSestavyVObjednavkachDialog(QDialog):
 
         # Title
         lbl_title = QLabel("Vyhledávání sestavy v objednávkách")
-        lbl_title.setObjectName("titleLabel")
+        lbl_title.setObjectName("dialogTitle")
         lbl_title.setAlignment(Qt.AlignCenter)
         layout.addWidget(lbl_title)
 

@@ -44,3 +44,22 @@ ENV/
 .vscode/
 *.swp
 *~
+Thumbs.db
+*/Thumbs.db
+
+# Production data and sensitive configurations
+DATA/
+app/DATA/
+Zaloha/
+app/Zaloha/
+*.ini
+!*.example.ini
+!app/*.example.ini
+credentials.json
+app/credentials.json
+token.json
+app/token.json
+*client_secret*.json
+app/*client_secret*.json
+_last_backup.txt
+app/_last_backup.txt

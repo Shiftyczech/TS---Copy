@@ -29,7 +29,7 @@ class VyhledaniObjednavkyDialog(QDialog):
         layout = QVBoxLayout(self)
 
         lbl = QLabel("Vyhledání objednávky")
-        lbl.setObjectName("titleLabel")
+        lbl.setObjectName("dialogTitle")
         lbl.setAlignment(Qt.AlignCenter)
         layout.addWidget(lbl)
 

@@ -111,7 +111,7 @@ class SeznamObjednavekDialog(QDialog):
         layout.setContentsMargins(8, 8, 8, 8)
 
         lbl = QLabel("Archiv objednávek" if self.is_archive else "Seznam objednávek")
-        lbl.setObjectName("titleLabel")
+        lbl.setObjectName("dialogTitle")
         lbl.setAlignment(Qt.AlignCenter)
         layout.addWidget(lbl)
 

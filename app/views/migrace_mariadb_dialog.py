@@ -8,7 +8,7 @@ import configparser
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QProgressBar, QTextEdit, QMessageBox, QGroupBox,
-    QFormLayout, QSpinBox
+    QGridLayout, QSpinBox
 )
 from PySide6.QtCore import Qt, QThread, Signal
 from app.services.mariadb_service import test_mariadb_connection
@@ -53,8 +53,8 @@ class MigraceMariaDbDialog(QDialog):
         super().__init__(parent)
         self.ctx = ctx
         self.setWindowTitle("Nastavení a převod do MariaDB (Synology NAS)")
-        self.setMinimumSize(620, 560)
-        self.resize(650, 600)
+        self.setMinimumSize(700, 640)
+        self.resize(750, 670)
         self._worker = None
 
         self._ini_path = os.path.join(self.ctx.app_dir, "db_config.ini")
@@ -63,11 +63,11 @@ class MigraceMariaDbDialog(QDialog):
 
     def _build_ui(self):
         layout = QVBoxLayout(self)
-        layout.setSpacing(12)
-        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(8)
+        layout.setContentsMargins(14, 12, 14, 12)
 
         title = QLabel("Centrální databáze MariaDB na Synology")
-        title.setObjectName("titleLabel")
+        title.setObjectName("dialogTitle")
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
 
@@ -75,92 +75,128 @@ class MigraceMariaDbDialog(QDialog):
             "Umožňuje bezpečný a rychlý souběžný běh programu na více počítačích najednou.\n"
             "Data jsou uložena centrálně na Synology NASu v MariaDB 10 a automaticky chráněna denní zálohou."
         )
+        desc.setAlignment(Qt.AlignCenter)
         desc.setWordWrap(True)
+        desc.setStyleSheet("color: #B0BEC5; margin-bottom: 2px;")
         layout.addWidget(desc)
 
         # Connection Form Group
         grp_conn = QGroupBox("Parametry připojení k Synology MariaDB 10")
-        form = QFormLayout(grp_conn)
-        form.setSpacing(8)
+        conn_layout = QVBoxLayout(grp_conn)
+        conn_layout.setSpacing(6)
 
+        form = QGridLayout()
+        form.setSpacing(6)
+        form.setColumnStretch(1, 3)
+        form.setColumnStretch(3, 1)
+
+        lbl_host = QLabel("IP adresa / Hostitel:")
         self.edit_host = QLineEdit()
         self.edit_host.setPlaceholderText("např. 10.0.0.20 nebo IP vašeho Synology")
-        form.addRow("IP adresa / Hostitel:", self.edit_host)
+        self.edit_host.setMinimumHeight(28)
 
-        port_row = QHBoxLayout()
+        lbl_port = QLabel("Port:")
         self.spin_port = QSpinBox()
         self.spin_port.setRange(1, 65535)
         self.spin_port.setValue(3306)
-        self.spin_port.setMinimumWidth(100)
-        port_row.addWidget(self.spin_port)
-        port_row.addStretch()
-        form.addRow("Port (výchozí 3306):", port_row)
+        self.spin_port.setMinimumHeight(28)
 
+        form.addWidget(lbl_host, 0, 0)
+        form.addWidget(self.edit_host, 0, 1)
+        form.addWidget(lbl_port, 0, 2)
+        form.addWidget(self.spin_port, 0, 3)
+
+        lbl_db = QLabel("Název databáze:")
         self.edit_database = QLineEdit("ts_skleniky")
-        form.addRow("Název databáze:", self.edit_database)
+        self.edit_database.setMinimumHeight(28)
+        form.addWidget(lbl_db, 1, 0)
+        form.addWidget(self.edit_database, 1, 1, 1, 3)
 
+        lbl_user = QLabel("Uživatel:")
         self.edit_user = QLineEdit("root")
-        form.addRow("Uživatel:", self.edit_user)
+        self.edit_user.setMinimumHeight(28)
 
+        lbl_pwd = QLabel("Heslo:")
         self.edit_password = QLineEdit()
         self.edit_password.setEchoMode(QLineEdit.EchoMode.Password)
         self.edit_password.setPlaceholderText("Heslo zadané při instalaci MariaDB 10")
-        form.addRow("Heslo:", self.edit_password)
+        self.edit_password.setMinimumHeight(28)
+
+        form.addWidget(lbl_user, 2, 0)
+        form.addWidget(self.edit_user, 2, 1)
+        form.addWidget(lbl_pwd, 2, 2)
+        form.addWidget(self.edit_password, 2, 3)
+
+        conn_layout.addLayout(form)
 
         btn_test_row = QHBoxLayout()
-        self.btn_test = QPushButton("Otestovat připojení")
+        self.btn_test = QPushButton("🔍 Otestovat připojení")
+        self.btn_test.setMinimumHeight(30)
         self.btn_test.clicked.connect(self._test_connection)
         btn_test_row.addWidget(self.btn_test)
+
         self.lbl_test_result = QLabel("")
         btn_test_row.addWidget(self.lbl_test_result)
         btn_test_row.addStretch()
-        form.addRow("", btn_test_row)
+        conn_layout.addLayout(btn_test_row)
 
         layout.addWidget(grp_conn)
 
         # Action Buttons Group
-        grp_actions = QGroupBox("Převod a aktivace")
+        grp_actions = QGroupBox("Převod dat a přepnutí databáze")
         act_layout = QVBoxLayout(grp_actions)
+        act_layout.setSpacing(6)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
+        self.progress_bar.setMinimumHeight(20)
         act_layout.addWidget(self.progress_bar)
 
         self.lbl_status = QLabel("Připraveno k testu nebo převodu dat.")
         self.lbl_status.setAlignment(Qt.AlignCenter)
+        self.lbl_status.setStyleSheet("font-weight: bold; color: #FFD54F;")
         act_layout.addWidget(self.lbl_status)
 
         self.txt_log = QTextEdit()
         self.txt_log.setReadOnly(True)
-        self.txt_log.setMaximumHeight(140)
+        self.txt_log.setMinimumHeight(80)
+        self.txt_log.setMaximumHeight(120)
+        self.txt_log.setPlaceholderText("Průběh převodu dat se zobrazí zde...")
         act_layout.addWidget(self.txt_log)
 
-        btn_box = QHBoxLayout()
-        self.btn_migrate = QPushButton("Převést data z SQLite do MariaDB")
+        self.btn_migrate = QPushButton("⚡ Převést data z SQLite do MariaDB")
         self.btn_migrate.setObjectName("accentButton")
+        self.btn_migrate.setMinimumHeight(34)
+        self.btn_migrate.setStyleSheet("font-size: 13px; font-weight: bold;")
         self.btn_migrate.clicked.connect(self._start_migration)
-        btn_box.addWidget(self.btn_migrate)
+        act_layout.addWidget(self.btn_migrate)
 
-        self.btn_activate = QPushButton("Aktivovat MariaDB v aplikaci")
+        btn_sub_row = QHBoxLayout()
+        self.btn_activate = QPushButton("✓ Aktivovat MariaDB v aplikaci")
+        self.btn_activate.setMinimumHeight(30)
         self.btn_activate.clicked.connect(self._activate_mariadb)
-        btn_box.addWidget(self.btn_activate)
+        btn_sub_row.addWidget(self.btn_activate)
 
-        self.btn_switch_sqlite = QPushButton("Přepnout zpět na lokální SQLite")
+        self.btn_switch_sqlite = QPushButton("↶ Přepnout zpět na SQLite")
+        self.btn_switch_sqlite.setMinimumHeight(30)
         self.btn_switch_sqlite.clicked.connect(self._switch_to_sqlite)
-        btn_box.addWidget(self.btn_switch_sqlite)
+        btn_sub_row.addWidget(self.btn_switch_sqlite)
 
-        act_layout.addLayout(btn_box)
+        act_layout.addLayout(btn_sub_row)
         layout.addWidget(grp_actions)
 
         # Bottom row
         bot_row = QHBoxLayout()
         self.btn_save_cfg = QPushButton("Uložit nastavení")
+        self.btn_save_cfg.setMinimumHeight(30)
         self.btn_save_cfg.clicked.connect(self._save_config)
         bot_row.addWidget(self.btn_save_cfg)
 
         bot_row.addStretch()
         self.btn_close = QPushButton("Zavřít")
+        self.btn_close.setMinimumHeight(30)
+        self.btn_close.setMinimumWidth(90)
         self.btn_close.clicked.connect(self.accept)
         bot_row.addWidget(self.btn_close)
         layout.addLayout(bot_row)

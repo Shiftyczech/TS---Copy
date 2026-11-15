@@ -24,7 +24,7 @@ class UzivateleDialog(QDialog):
         layout.setContentsMargins(8, 8, 8, 8)
 
         lbl = QLabel("Uživatelé")
-        lbl.setObjectName("titleLabel")
+        lbl.setObjectName("dialogTitle")
         lbl.setAlignment(Qt.AlignCenter)
         layout.addWidget(lbl)
 
