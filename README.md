@@ -94,17 +94,38 @@ Program podporuje současnou práci více uživatelů v kanceláři v zapojení 
 
 ## 🔄 Vzdálené automatické aktualizace (GitHub Releases)
 
-Aplikace obsahuje vestavěný auto-updater propojený s tímto GitHub repozitářem:
+Aplikace obsahuje vestavěný auto-updater propojený s GitHub repozitářem a plně automatizovaný build přes **GitHub Actions**:
 
-1. **Vydání nové verze z domova:**
-   - V souboru `app/version.py` se zvýší číslo verze (např. na `1.0.1`).
-   - Přes `build.bat` se vygeneruje nový `EvidenceSkleniků.exe`.
-   - Na GitHubu se v sekci *Releases* vytvoří nové vydání s příslušným tagem a přiloženým `.exe`.
-2. **Automatická detekce v kanceláři:**
-   - Po spuštění programu na klientském PC proběhne tichá kontrola nejnovější verze.
+1. **Vydání nové verze přímo z vývojového prostředí (např. Parrot OS / Linux):**
+   - Nemusíte přepínat na Windows PC ani mít na vývojovém stroji PyInstaller pro Windows.
+   - Stačí z Linuxu vytvořit a odeslat git tag s verzí:
+     ```bash
+     git tag v1.0.1
+     git push origin v1.0.1
+     ```
+   - GitHub Actions na čistém cloudovém virtuálním stroji s Windows 11 automaticky:
+     - Nainstaluje čisté prostředí Pythonu a knihovny.
+     - Nastaví číslo verze do aplikace.
+     - Zkompiluje `EvidenceSkleniku.exe` (s vypnutým UPX pro maximální kompatibilitu s Windows Defenderem).
+     - Vystaví nové vydání v GitHub Releases a přiloží k němu hotový `.exe`.
+
+2. **Automatická detekce a aktualizace v kanceláři:**
+   - 2,5 sekundy po spuštění programu na kterémkoliv z PC v kanceláři proběhne tichá kontrola verze na GitHubu.
+   - Lze také kdykoliv zkontrolovat ručně z menu *Nápověda -> Zkontrolovat aktualizace...*.
    - Při nalezení nové verze se zobrazí dotaz:
      > *K dispozici je nová verze aplikace (vX.X.X). Přejete si aplikaci nyní aktualizovat a restartovat?*
-   - Po potvrzení se nový soubor stáhne a běžící aplikace se atomicky nahradí a restartuje.
+   - Po potvrzení aplikace sama stáhne nový `EvidenceSkleniku.exe`, bezpečně nahradí běžící soubor a restartuje se. Konfigurace (`db_config.ini`) i databáze zůstávají netknuté.
+
+---
+
+## 💻 Kompatibilita sestaveného .exe na Windows 11 v kanceláři
+
+Proč zkompilovaný `EvidenceSkleniku.exe` z GitHub Actions funguje na obou počítačích v kanceláři bez nutnosti na ně cokoliv instalovat:
+
+* **100% soběstačnost (Standalone):** PyInstaller zabalí Python interpreter, PySide6 (Qt6), ovladače databáze (`pymysql`) i šablony stylů přímo do jednoho souboru. Klientské počítače v kanceláři **nemusí mít nainstalovaný Python, pip ani žádné knihovny**.
+* **Čisté prostředí buildu:** GitHub Actions kompiluje na standardizovaném Windows Server / Win 11 image, což vylučuje chyby typu „funguje to jen na mém PC“.
+* **Ochrana před Windows Defenderem:** V `EvidenceSkleniku.spec` je vypnuta komprese UPX (`upx=False`). Antivirové systémy a Windows Defender tak soubor neoznačují za falešný poplach.
+* **SmartScreen bez obtěžování:** Při automatické aktualizaci stahuje nový `.exe` přímo samotná aplikace (nikoliv webový prohlížeč), takže Windows nepřipojuje příznak *Zone.Identifier* a aktualizace probíhá hladce bez blokovacích obrazovek.
 
 ---
 
@@ -116,7 +137,7 @@ Aplikace obsahuje vestavěný auto-updater propojený s tímto GitHub repozitá�
 
 ### Instalace závislostí
 ```bash
-pip install -r app/requirements.txt
+pip install -r requirements.txt
 ```
 
 ### Spuštění aplikace ze zdrojových kódů
@@ -124,12 +145,13 @@ pip install -r app/requirements.txt
 python app/main.py
 ```
 
-### Sestavení spustitelného souboru (.exe) pro Windows
-V kořenové složce nebo ve složce `app/` spusťte:
+### Lokální sestavení spustitelného souboru (.exe) na Windows (volitelné)
+Pokud chcete sestavit aplikaci ručně přímo na počítači s Windows:
 ```cmd
-app\build.bat
+cd app
+build.bat
 ```
-Výsledný soubor `EvidenceSkleniků.exe` se vytvoří ve složce `app/dist/`.
+Výsledný soubor `EvidenceSkleniku.exe` se vytvoří ve složce `app/dist/`.
 
 ---
 

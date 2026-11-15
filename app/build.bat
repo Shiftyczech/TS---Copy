@@ -1,5 +1,11 @@
 @echo off
-echo Building EvidenceSkleniků...
-pyinstaller --onefile --windowed --name "EvidenceSkleniků" --add-data "styles;styles" --hidden-import default_symbols --hidden-import PySide6.QtPrintSupport --hidden-import encodings.idna --hidden-import encodings.cp1250 --hidden-import pymysql --hidden-import app.version --paths ".." main.py
-echo Done!
+chcp 65001 >nul
+echo Sestavovani EvidenceSkleniku pomoci PyInstaller...
+pyinstaller --clean -y EvidenceSkleniku.spec
+echo.
+if exist dist\EvidenceSkleniku.exe (
+    echo Hotovo! Soubor dist\EvidenceSkleniku.exe byl uspesne vytvoren.
+) else (
+    echo Chyba: Sestaveni se nezdarilo!
+)
 pause
