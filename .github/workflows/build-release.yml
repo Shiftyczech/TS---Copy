@@ -35,20 +35,32 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Nastavení čísla verze do app/version.py
+      - name: Určení verze a tagu
+        id: get_version
         shell: bash
         env:
           INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
+          ref="${GITHUB_REF_NAME}"
+          inp="${INPUT_VERSION}"
+          raw="${inp:-$ref}"
+          # Ostraneni 'v' pro cislo verze
+          ver="${raw#v}"
+          ver="${ver#V}"
+          if [ -z "$ver" ]; then
+            ver="1.0.1"
+          fi
+          tag="v${ver}"
+          echo "VERSION=${ver}" >> $GITHUB_OUTPUT
+          echo "TAG=${tag}" >> $GITHUB_OUTPUT
+          echo "Kompiluji verzi: ${ver} s tagem: ${tag}"
+
+      - name: Nastavení čísla verze do app/version.py
+        shell: bash
+        run: |
           python -c "
-          import os
-          ref = os.environ.get('GITHUB_REF_NAME', '')
-          inp = os.environ.get('INPUT_VERSION', '')
-          tag = inp or ref
-          ver = tag.lstrip('vV').strip() if tag else '1.0.0'
-          print(f'Kompiluji verzi: {ver}')
           with open('app/version.py', 'w', encoding='utf-8') as f:
-              f.write(f'\"\"\"\nApplication version information.\n\"\"\"\nAPP_VERSION = \"{ver}\"\nGITHUB_REPO = \"Shiftyczech/TS---Copy\"\n')
+              f.write('\"\"\"\nApplication version information.\n\"\"\"\nAPP_VERSION = \"${{ steps.get_version.outputs.VERSION }}\"\nGITHUB_REPO = \"Shiftyczech/TS---Copy\"\n')
           "
 
       - name: Sestavení .exe pomocí PyInstaller
@@ -66,12 +78,17 @@ jobs:
           )
           echo Soubor EvidenceSkleniku.exe byl uspesne vytvoren.
 
+      - name: Uložení .exe do artefaktů běhu
+        uses: actions/upload-artifact@v4
+        with:
+          name: EvidenceSkleniku-${{ steps.get_version.outputs.TAG }}
+          path: app/dist/EvidenceSkleniku.exe
+
       - name: Publikace GitHub Release a nahrání EvidenceSkleniku.exe
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
         with:
-          tag_name: ${{ github.ref_name }}
-          name: Verze ${{ github.ref_name }}
+          tag_name: ${{ steps.get_version.outputs.TAG }}
+          name: Verze ${{ steps.get_version.outputs.TAG }}
           files: app/dist/EvidenceSkleniku.exe
           generate_release_notes: true
           draft: false
