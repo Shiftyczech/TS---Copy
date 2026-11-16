@@ -98,6 +98,8 @@ class SqliteToMariaDbMigrator:
                     col_defs = ["`_recno` INT AUTO_INCREMENT PRIMARY KEY"]
                     col_names = []
                     date_col_indices = set()
+                    int_col_indices = set()
+                    float_col_indices = set()
 
                     for c_idx, c in enumerate(cols_info):
                         c_name = c[1].upper()
@@ -106,8 +108,10 @@ class SqliteToMariaDbMigrator:
 
                         if "INT" in c_type:
                             m_type = "BIGINT"
+                            int_col_indices.add(c_idx)
                         elif "REAL" in c_type or "FLOAT" in c_type or "DOUBLE" in c_type or "NUM" in c_type:
                             m_type = "DOUBLE"
+                            float_col_indices.add(c_idx)
                         elif "DATE" in c_type or c_name.startswith("DATUM"):
                             m_type = "DATE"
                             date_col_indices.add(c_idx)
@@ -141,9 +145,26 @@ class SqliteToMariaDbMigrator:
                         for r in rows:
                             row_vals = []
                             for c_i, val in enumerate(r):
-                                if c_i in date_col_indices and val:
-                                    # Parse date if string
-                                    if isinstance(val, str):
+                                if c_i in int_col_indices:
+                                    if val is None or val == "" or str(val).strip().lower() in ("none", "null"):
+                                        val = None
+                                    else:
+                                        try:
+                                            val = int(float(str(val).strip()))
+                                        except (ValueError, TypeError):
+                                            val = None
+                                elif c_i in float_col_indices:
+                                    if val is None or val == "" or str(val).strip().lower() in ("none", "null"):
+                                        val = None
+                                    else:
+                                        try:
+                                            val = float(str(val).strip().replace(",", "."))
+                                        except (ValueError, TypeError):
+                                            val = None
+                                elif c_i in date_col_indices:
+                                    if val is None or val == "" or str(val).strip().lower() in ("none", "null"):
+                                        val = None
+                                    elif isinstance(val, str):
                                         val = val.strip()
                                         if len(val) >= 10:
                                             try:
