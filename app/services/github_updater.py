@@ -27,12 +27,17 @@ def cleanup_old_executable():
     """Remove leftover .old executable from previous update if present."""
     if not getattr(sys, "frozen", False):
         return
-    old_exe = sys.executable + ".old"
-    if os.path.isfile(old_exe):
-        try:
-            os.remove(old_exe)
-        except Exception:
-            pass
+    try:
+        app_dir = os.path.dirname(sys.executable)
+        base_name = os.path.basename(sys.executable)
+        for fname in os.listdir(app_dir):
+            if fname.startswith(base_name + ".old"):
+                try:
+                    os.remove(os.path.join(app_dir, fname))
+                except Exception:
+                    pass
+    except Exception:
+        pass
 
 
 class UpdateInfo:
@@ -136,15 +141,50 @@ def download_and_install_update(download_url: str, progress_callback: Optional[C
         progress_callback(100)
 
     # Atomic swap on Windows: rename running .exe to .old, move .tmp into place
+    import time
     old_exe = target_exe + ".old"
     if os.path.exists(old_exe):
-        try:
-            os.remove(old_exe)
-        except Exception:
-            pass
+        for _ in range(5):
+            try:
+                os.remove(old_exe)
+                break
+            except Exception:
+                time.sleep(0.3)
 
-    os.rename(target_exe, old_exe)
-    os.rename(temp_new_exe, target_exe)
+    # If old_exe is still locked, use a timestamped backup name
+    if os.path.exists(old_exe):
+        old_exe = f"{target_exe}.old.{int(time.time())}"
+
+    # Rename current running .exe (Windows allows renaming running binaries)
+    renamed = False
+    for i in range(6):
+        try:
+            os.rename(target_exe, old_exe)
+            renamed = True
+            break
+        except Exception:
+            if i == 5:
+                raise
+            time.sleep(0.4)
+
+    # Move downloaded .tmp into target_exe position
+    for i in range(6):
+        try:
+            if hasattr(os, "replace"):
+                os.replace(temp_new_exe, target_exe)
+            else:
+                os.rename(temp_new_exe, target_exe)
+            break
+        except Exception:
+            if i == 5:
+                # If moving failed, try to restore original exe
+                if renamed and os.path.exists(old_exe):
+                    try:
+                        os.rename(old_exe, target_exe)
+                    except Exception:
+                        pass
+                raise
+            time.sleep(0.4)
 
     # Launch new process and exit current
     from PySide6.QtCore import QProcess
