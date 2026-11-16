@@ -600,7 +600,8 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(
                     self,
                     "Aktualizace",
-                    f"Máte nejnovější verzi aplikace (v{APP_VERSION})."
+                    f"Máte aktuální verzi aplikace: v{APP_VERSION}\n"
+                    f"(Nejnovější verze na GitHubu: v{info.latest_version})"
                 )
 
         self._update_worker.finished.connect(on_finished)

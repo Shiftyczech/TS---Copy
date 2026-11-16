@@ -51,25 +51,37 @@ class UpdateInfo:
         self.release_notes = release_notes
 
 
-def check_for_updates() -> UpdateInfo:
+def check_for_updates() -> Optional[UpdateInfo]:
     """Check GitHub API for the latest release."""
     api_url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
     req = urllib.request.Request(
         api_url,
         headers={
             "User-Agent": "TS-Evidence-Skleniky",
-            "Accept": "application/vnd.github.v3+json"
+            "Accept": "application/vnd.github.v3+json",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache"
         }
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=8) as resp:
+        import ssl
+        try:
+            ctx = ssl.create_default_context()
+            resp_cm = urllib.request.urlopen(req, timeout=10, context=ctx)
+        except (ssl.SSLError, Exception):
+            # Fallback if local machine has certificate store issues
+            ctx = ssl._create_unverified_context()
+            resp_cm = urllib.request.urlopen(req, timeout=10, context=ctx)
+
+        with resp_cm as resp:
             if resp.status != 200:
-                return UpdateInfo(False, APP_VERSION, "", "", 0)
+                return None
             data = json.loads(resp.read().decode("utf-8"))
-    except Exception:
-        # Offline or repository has no releases yet
-        return UpdateInfo(False, APP_VERSION, "", "", 0)
+    except Exception as e:
+        # Connection error, offline, or rate limited
+        print(f"Update check error: {e}")
+        return None
 
     tag = data.get("tag_name", "")
     latest_ver = tag.lstrip("vV").strip()
