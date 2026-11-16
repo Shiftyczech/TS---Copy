@@ -456,6 +456,30 @@ class BackupDialog(QDialog):
             if action in ("restore_local", "restore_gdrive"):
                 self._refresh_backup_list()
                 self._refresh_gdrive_status()
+                backend = getattr(self.ctx, "backend_name", "sqlite").lower()
+                if backend == "mariadb":
+                    reply = QMessageBox.question(
+                        self,
+                        "Obnova dokončena – přenos do MariaDB",
+                        "Záloha byla úspěšně obnovena do lokální složky DATA.\n\n"
+                        "POZOR: Aplikace má nyní aktivní síťovou databázi MariaDB na Synology!\n"
+                        "Aby se tato obnovená data projevila i na Synology a na druhém PC, "
+                        "je potřeba spustit převod dat do MariaDB.\n\n"
+                        "Chcete nyní otevřít okno pro nahrání obnovených dat do MariaDB?",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.Yes
+                    )
+                    if reply == QMessageBox.Yes:
+                        self.accept()
+                        from app.views.migrace_mariadb_dialog import MigraceMariaDbDialog
+                        dlg = MigraceMariaDbDialog(self.ctx, parent=self.parent())
+                        dlg.exec()
+                        return
+                    else:
+                        if hasattr(self.ctx, "reopen_db"):
+                            self.ctx.reopen_db()
+                        return
+
                 reply = QMessageBox.question(
                     self,
                     "Obnova dokončena",

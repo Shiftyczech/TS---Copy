@@ -253,7 +253,7 @@ class AppContext:
         from PySide6.QtWidgets import QApplication
         
         self.close_db()
-        QProcess.startDetached(sys.executable, sys.argv)
+        QProcess.startDetached(sys.executable, sys.argv[1:])
         app = QApplication.instance()
         if app:
             app.quit()
