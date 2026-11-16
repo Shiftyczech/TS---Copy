@@ -415,7 +415,8 @@ class SeznamObjednavekDialog(QDialog):
         self._display(rows)
 
     def _get_route_orders_path(self):
-        return os.path.join(self.ctx.db.data_path, "route_orders.json")
+        data_dir = getattr(self.ctx.db, "data_path", getattr(self.ctx, "data_dir", os.path.join(self.ctx.app_dir, "DATA")))
+        return os.path.join(data_dir, "route_orders.json")
 
     def _load_custom_order(self):
         path = self._get_route_orders_path()

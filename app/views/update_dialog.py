@@ -112,7 +112,26 @@ class UpdateDialog(QDialog):
 
     def _on_finished(self, ok: bool, err_msg: str):
         if ok:
+            import sys
+            from PySide6.QtCore import QProcess
+            from PySide6.QtWidgets import QApplication
+
             self.lbl_status.setText("Restartuji aplikaci...")
+            parent = self.parent()
+            if parent:
+                parent._is_restarting_for_update = True
+                if hasattr(parent, "ctx") and parent.ctx:
+                    parent.ctx.is_restarting = True
+                    parent.ctx.close_db()
+
+            self.accept()
+
+            QProcess.startDetached(sys.executable, sys.argv[1:])
+            app = QApplication.instance()
+            if app:
+                app.quit()
+            else:
+                sys.exit(0)
         else:
             self.btn_update.setEnabled(True)
             self.btn_later.setEnabled(True)

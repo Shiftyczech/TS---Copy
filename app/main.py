@@ -155,6 +155,8 @@ class AppContext:
     """Holds shared state: DB service, app directory paths, and cache."""
     def __init__(self, app_dir):
         self.app_dir = app_dir
+        self.data_dir = os.path.join(self.app_dir, "DATA")
+        self.is_restarting = False
         self._cache = {}
         self._init_backend()
 
@@ -186,7 +188,8 @@ class AppContext:
                     port=int(cfg.get("port", 3306)),
                     user=cfg.get("user", "root"),
                     password=cfg.get("password", ""),
-                    database=cfg.get("database", "ts_skleniky")
+                    database=cfg.get("database", "ts_skleniky"),
+                    data_path=self.data_dir
                 )
                 self.backend_name = "mariadb"
             except Exception as e:
@@ -252,6 +255,7 @@ class AppContext:
         from PySide6.QtCore import QProcess
         from PySide6.QtWidgets import QApplication
         
+        self.is_restarting = True
         self.close_db()
         QProcess.startDetached(sys.executable, sys.argv[1:])
         app = QApplication.instance()

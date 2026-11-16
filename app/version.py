@@ -2,5 +2,5 @@
 Application version information.
 Used for automated GitHub Releases updates.
 """
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.4"
 GITHUB_REPO = "Shiftyczech/TS---Copy"

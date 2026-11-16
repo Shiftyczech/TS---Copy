@@ -198,15 +198,5 @@ def download_and_install_update(download_url: str, progress_callback: Optional[C
                 raise
             time.sleep(0.4)
 
-    # Launch new process and exit current
-    from PySide6.QtCore import QProcess
-    from PySide6.QtWidgets import QApplication
-
-    QProcess.startDetached(target_exe, sys.argv[1:])
-    app = QApplication.instance()
-    if app:
-        app.quit()
-    else:
-        sys.exit(0)
-
+    # File swap successfully finished. Return True so caller on GUI thread can restart cleanly.
     return True

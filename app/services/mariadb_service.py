@@ -27,7 +27,8 @@ class DatabaseError(Exception):
 class MariaDbService:
     def __init__(self, host: str = "10.0.0.20", port: int = 3306,
                  user: str = "root", password: str = "",
-                 database: str = "ts_skleniky", connect_timeout: int = 10):
+                 database: str = "ts_skleniky", connect_timeout: int = 10,
+                 data_path: Optional[str] = None):
         if pymysql is None:
             raise DatabaseError("Knihovna 'pymysql' není nainstalována. Spusťte: pip install pymysql")
 
@@ -37,6 +38,7 @@ class MariaDbService:
         self.password = password
         self.database = database
         self.connect_timeout = connect_timeout
+        self.data_path = os.path.normpath(data_path) if data_path else os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "DATA"))
 
         self.on_mutation = None
         self._local = threading.local()

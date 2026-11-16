@@ -544,6 +544,11 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def closeEvent(self, event):
+        # Skip backup dialog if restarting smoothly (e.g. after update or restore)
+        if getattr(self, "_is_restarting_for_update", False) or getattr(self.ctx, "is_restarting", False):
+            event.accept()
+            return
+
         from app.services.backup_service import BackupService
         svc = BackupService(self.ctx)
 

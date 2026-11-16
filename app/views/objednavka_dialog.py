@@ -421,6 +421,7 @@ class ObjednavkaDialog(QDialog):
         self.tbl_dily.verticalHeader().setMinimumSectionSize(36)
         self.tbl_dily.setSortingEnabled(False)  # We manage sorting manually
         self.tbl_dily.cellChanged.connect(self._on_dil_cell_changed)
+        self.tbl_dily.doubleClicked.connect(self._edit_dil)
         tables_layout.addWidget(self.tbl_dily)
 
         layout.addLayout(tables_layout, stretch=3)
@@ -547,11 +548,27 @@ class ObjednavkaDialog(QDialog):
 
             self._recalc_totals()
 
+    def _is_montaz_item(self, p: dict) -> bool:
+        """Check if a part item represents assembly/installation (Montáž)."""
+        if p.get("is_montaz"):
+            return True
+        kod_str = str(p.get("kod", "")).strip()
+        try:
+            k_int = int(float(kod_str))
+            if 39 <= k_int <= 47:
+                return True
+        except (ValueError, TypeError):
+            pass
+        nazev_lower = str(p.get("nazev", "")).strip().lower()
+        if "montáž" in nazev_lower:
+            return True
+        return False
+
     def _on_dil_cell_changed(self, row, col):
         if getattr(self, "_ignore_cell_changes", False):
             return
-        if col == 3:  # Počet
-            # Let _recalc_totals handle saving memory and updating totals
+        if col in (2, 3):  # Cena i Počet
+            self._save_current_dily_to_memory()
             self._recalc_totals()
 
     def _save_current_dily_to_memory(self):
@@ -567,12 +584,16 @@ class ObjednavkaDialog(QDialog):
             pocet_item = self.tbl_dily.item(r, 3)
             # Check if this is a glass item by its stored data
             is_glass = bool(nazev_item.data(Qt.UserRole)) if nazev_item else False
+            kod_str = kod_item.text().strip() if kod_item else ""
+            nazev_str = nazev_item.text().strip() if nazev_item else ""
+            is_m = self._is_montaz_item({"kod": kod_str, "nazev": nazev_str})
             parts.append({
-                "kod": kod_item.text() if kod_item else "",
-                "nazev": nazev_item.text() if nazev_item else "",
-                "cena": cena_item.text() if cena_item else "0",
-                "pocet": pocet_item.text() if pocet_item else "1",
+                "kod": kod_str,
+                "nazev": nazev_str,
+                "cena": cena_item.text().strip() if cena_item else "0",
+                "pocet": pocet_item.text().strip() if pocet_item else "1",
                 "is_glass": is_glass,
+                "is_montaz": is_m,
             })
         self._dily_per_sestava[uid] = parts
 
@@ -671,20 +692,55 @@ class ObjednavkaDialog(QDialog):
         right_layout.setAlignment(Qt.AlignTop)
         right_layout.addSpacing(20)
 
-        for label_text, attr_name in [("Sestavy", "lbl_cena_sestavy"),
-                                       ("Doplňky", "lbl_cena_doplnky"),
-                                       ("Dopravné", "lbl_cena_dopravne")]:
-            row = QHBoxLayout()
-            row.addStretch()
-            row.addWidget(QLabel(label_text))
-            lbl = QLineEdit("0")
-            lbl.setReadOnly(True)
-            lbl.setMaximumWidth(80)
-            lbl.setAlignment(Qt.AlignRight)
-            row.addWidget(lbl)
-            row.addWidget(QLabel("Kč"))
-            right_layout.addLayout(row)
-            setattr(self, attr_name, lbl)
+        # Sestavy
+        row_sest = QHBoxLayout()
+        row_sest.addStretch()
+        row_sest.addWidget(QLabel("Sestavy"))
+        self.lbl_cena_sestavy = QLineEdit("0")
+        self.lbl_cena_sestavy.setReadOnly(True)
+        self.lbl_cena_sestavy.setMaximumWidth(80)
+        self.lbl_cena_sestavy.setAlignment(Qt.AlignRight)
+        row_sest.addWidget(self.lbl_cena_sestavy)
+        row_sest.addWidget(QLabel("Kč"))
+        right_layout.addLayout(row_sest)
+
+        # Montáž (přímá editace ceny montáže)
+        row_mont = QHBoxLayout()
+        row_mont.addStretch()
+        lbl_mont = QLabel("Montáž")
+        lbl_mont.setStyleSheet("font-weight: bold; color: #4CAF50;")
+        row_mont.addWidget(lbl_mont)
+        self.edit_cena_montaze = QLineEdit("0")
+        self.edit_cena_montaze.setMaximumWidth(80)
+        self.edit_cena_montaze.setAlignment(Qt.AlignRight)
+        self.edit_cena_montaze.textEdited.connect(self._on_montaz_price_edited)
+        row_mont.addWidget(self.edit_cena_montaze)
+        row_mont.addWidget(QLabel("Kč"))
+        right_layout.addLayout(row_mont)
+
+        # Doplňky
+        row_dopl = QHBoxLayout()
+        row_dopl.addStretch()
+        row_dopl.addWidget(QLabel("Doplňky"))
+        self.lbl_cena_doplnky = QLineEdit("0")
+        self.lbl_cena_doplnky.setReadOnly(True)
+        self.lbl_cena_doplnky.setMaximumWidth(80)
+        self.lbl_cena_doplnky.setAlignment(Qt.AlignRight)
+        row_dopl.addWidget(self.lbl_cena_doplnky)
+        row_dopl.addWidget(QLabel("Kč"))
+        right_layout.addLayout(row_dopl)
+
+        # Dopravné
+        row_dopr = QHBoxLayout()
+        row_dopr.addStretch()
+        row_dopr.addWidget(QLabel("Dopravné"))
+        self.lbl_cena_dopravne = QLineEdit("0")
+        self.lbl_cena_dopravne.setReadOnly(True)
+        self.lbl_cena_dopravne.setMaximumWidth(80)
+        self.lbl_cena_dopravne.setAlignment(Qt.AlignRight)
+        row_dopr.addWidget(self.lbl_cena_dopravne)
+        row_dopr.addWidget(QLabel("Kč"))
+        right_layout.addLayout(row_dopr)
 
         # Total - bold
         total_row = QHBoxLayout()
@@ -938,12 +994,15 @@ class ObjednavkaDialog(QDialog):
             # Save current table state, add new part, redisplay
             self._save_current_dily_to_memory()
             parts = self._dily_per_sestava.get(uid, [])
+            kod_str = str(dlg.selected["KOD"])
+            is_m = self._is_montaz_item({"kod": kod_str, "nazev": dlg.selected["NAZEV"]})
             parts.append({
-                "kod": str(dlg.selected["KOD"]),
+                "kod": kod_str,
                 "nazev": dlg.selected["NAZEV"],
                 "cena": str(dlg.selected["CENA"]),
                 "pocet": "1",
                 "is_glass": False,
+                "is_montaz": is_m,
             })
             self._dily_per_sestava[uid] = parts
             self._display_dily_for_sestava(uid)
@@ -967,16 +1026,84 @@ class ObjednavkaDialog(QDialog):
         row = self.tbl_dily.currentRow()
         if row < 0:
             return
-        from app.views.edit_pocet_dialog import EditPocetDialog
-        current = self.tbl_dily.item(row, 3).text() if self.tbl_dily.item(row, 3) else "1"
-        dlg = EditPocetDialog(current_qty=int(current), parent=self)
+        from app.views.edit_dil_item_dialog import EditDilItemDialog
+        nazev_item = self.tbl_dily.item(row, 1)
+        cena_item = self.tbl_dily.item(row, 2)
+        pocet_item = self.tbl_dily.item(row, 3)
+
+        nazev = nazev_item.text() if nazev_item else ""
+        try:
+            current_cena = int(float(cena_item.text().strip() or 0)) if cena_item else 0
+        except (ValueError, TypeError):
+            current_cena = 0
+        try:
+            current_pocet = int(float(pocet_item.text().strip() or 1)) if pocet_item else 1
+        except (ValueError, TypeError):
+            current_pocet = 1
+        is_glass = bool(nazev_item.data(Qt.UserRole)) if nazev_item else False
+
+        dlg = EditDilItemDialog(
+            nazev=nazev,
+            current_cena=current_cena,
+            current_pocet=current_pocet,
+            is_glass=is_glass,
+            parent=self
+        )
         if dlg.exec() == QDialog.Accepted:
-            # Update the count in tbl_dily directly, then save to memory
             self._ignore_cell_changes = True
+            self.tbl_dily.setItem(row, 2, NumericSortItem(str(dlg.get_cena())))
             self.tbl_dily.setItem(row, 3, NumericSortItem(str(dlg.get_pocet())))
             self._ignore_cell_changes = False
             self._save_current_dily_to_memory()
             self._recalc_totals()
+
+    def _on_montaz_price_edited(self, text: str):
+        if getattr(self, "_ignore_montaz_text_change", False):
+            return
+        try:
+            val_clean = int(float(text.replace(" ", "").replace(",", ".") or 0))
+        except (ValueError, TypeError):
+            val_clean = 0
+
+        self._save_current_dily_to_memory()
+
+        # Look for existing montage item across all sestavy
+        found = False
+        for uid, parts in self._dily_per_sestava.items():
+            for p in parts:
+                if self._is_montaz_item(p):
+                    p["cena"] = str(val_clean)
+                    p["is_montaz"] = True
+                    found = True
+                    break
+            if found:
+                break
+
+        # If not found and price > 0, attach montage item to current or first sestava
+        if not found and val_clean > 0:
+            target_uid = self._get_current_sestava_uid()
+            if target_uid is None and self.tbl_sestavy.rowCount() > 0:
+                uid_item = self.tbl_sestavy.item(0, 5)
+                if uid_item:
+                    target_uid = int(uid_item.text())
+            if target_uid is not None:
+                parts = self._dily_per_sestava.get(target_uid, [])
+                parts.append({
+                    "kod": "40",
+                    "nazev": "Montáž",
+                    "cena": str(val_clean),
+                    "pocet": "1",
+                    "is_glass": False,
+                    "is_montaz": True
+                })
+                self._dily_per_sestava[target_uid] = parts
+
+        if self._current_sestava_uid is not None:
+            self._display_dily_for_sestava(self._current_sestava_uid)
+
+        self._skip_update_montaz_input = True
+        self._recalc_totals()
+        self._skip_update_montaz_input = False
 
     def _recalc_totals(self):
         # Save current table to memory first
@@ -995,7 +1122,8 @@ class ObjednavkaDialog(QDialog):
                 dopr = float(dopr_item.text() or 0) if dopr_item else 0.0
                 total_dopravne += dopr * pocet
 
-        # Sum parts across ALL greenhouses (not just the currently displayed one)
+        # Sum parts across ALL greenhouses, separating Montáž and other accessories
+        total_montaz = 0.0
         total_dily = 0.0
         for uid, parts in self._dily_per_sestava.items():
             for p in parts:
@@ -1005,12 +1133,19 @@ class ObjednavkaDialog(QDialog):
                 except (ValueError, TypeError):
                     cena = 0.0
                     pocet = 1
-                total_dily += cena * pocet
+                if self._is_montaz_item(p):
+                    total_montaz += cena * pocet
+                else:
+                    total_dily += cena * pocet
 
         self.lbl_cena_sestavy.setText(str(int(total_sestavy)))
+        if not getattr(self, "_skip_update_montaz_input", False) and hasattr(self, "edit_cena_montaze"):
+            self._ignore_montaz_text_change = True
+            self.edit_cena_montaze.setText(str(int(total_montaz)))
+            self._ignore_montaz_text_change = False
         self.lbl_cena_doplnky.setText(str(int(total_dily)))
         self.lbl_cena_dopravne.setText(str(int(total_dopravne)))
-        self.lbl_cena_celkem.setText(str(int(total_sestavy + total_dily + total_dopravne)))
+        self.lbl_cena_celkem.setText(str(int(total_sestavy + total_montaz + total_dily + total_dopravne)))
 
     # ===================== Print =====================
     def _print_order(self):
@@ -1105,7 +1240,9 @@ class ObjednavkaDialog(QDialog):
         except ValueError:
             data["CENA_SEST"] = 0
         try:
-            data["CENA_DOPL"] = int(self.lbl_cena_doplnky.text() or 0)
+            montaz_val = int(self.edit_cena_montaze.text().strip() or 0) if hasattr(self, "edit_cena_montaze") else 0
+            dopl_val = int(self.lbl_cena_doplnky.text().strip() or 0)
+            data["CENA_DOPL"] = montaz_val + dopl_val
         except ValueError:
             data["CENA_DOPL"] = 0
         try:
@@ -1116,6 +1253,19 @@ class ObjednavkaDialog(QDialog):
             data["CENA_CELK"] = int(self.lbl_cena_celkem.text() or 0)
         except ValueError:
             data["CENA_CELK"] = 0
+
+        # SYMBOLY (zahrnutí 'M' při aktivní montáži)
+        sym = str(getattr(self, "_current_symboly", "") or "")
+        try:
+            has_montaz = bool(hasattr(self, "edit_cena_montaze") and int(self.edit_cena_montaze.text().strip() or 0) > 0)
+        except ValueError:
+            has_montaz = False
+        if has_montaz and "M" not in sym:
+            sym += "M"
+        elif not has_montaz and "M" in sym:
+            sym = sym.replace("M", "")
+        data["SYMBOLY"] = sym
+
         # Poznámka tab fields
         data["POZNAMKA"] = self.txt_pozn_intern.toPlainText()
         data["POZN_ZAK"] = self.txt_pozn_zakaz.toPlainText()
@@ -1163,6 +1313,7 @@ class ObjednavkaDialog(QDialog):
             for p in parts:
                 rows.append((
                     str(p.get("kod", "")),
+                    str(p.get("cena", "0")),
                     str(p.get("pocet", "1")),
                 ))
         return sorted(rows)
@@ -1475,8 +1626,9 @@ class ObjednavkaDialog(QDialog):
         self.txt_pozn_zakaz.setPlainText(str(record.get("POZN_ZAK", "")))
         self.chk_zmenena.setChecked(bool(record.get("ZMENA", False)))
 
-        # Trasa lookup
+        # Trasa lookup and symbols
         self._trasa_cislo = str(record.get("TRASA", "")).strip()
+        self._current_symboly = str(record.get("SYMBOLY", "") or "").strip()
         self._update_trasa_label()
 
         # Load items
@@ -1591,12 +1743,24 @@ class ObjednavkaDialog(QDialog):
                     is_glass = False
                     part_cena = str(int(cena_val) if cena_val.is_integer() else cena_val)
 
+                is_montaz = self._is_montaz_item({"kod": str(d_kod), "nazev": str(d.get("NAZEV") or "")})
+                if is_montaz and not is_glass:
+                    try:
+                        cat_rec = self.ctx.db.read_by_key("tsd03", "KOD", d_kod)
+                        if cat_rec:
+                            cat_cena = float(cat_rec.get("CENA", 0) or 0)
+                            if cat_cena > 0 and (cena_val == 0 or int(cena_val) in (4500, 5000, 6000, 7500, 9000, 10500, 12000, 13500, 15000, 16500)):
+                                part_cena = str(int(cat_cena) if cat_cena.is_integer() else cat_cena)
+                    except Exception:
+                        pass
+
                 parts_list.append({
                     "kod": str(d.get("KOD") or ""),
                     "nazev": str(d.get("NAZEV") or ""),
                     "cena": part_cena,
                     "pocet": str(mnoz),
                     "is_glass": is_glass,
+                    "is_montaz": is_montaz,
                 })
 
             # Add unlinked parts to every greenhouse (legacy data)
@@ -1621,12 +1785,24 @@ class ObjednavkaDialog(QDialog):
                     is_glass = False
                     part_cena = str(int(cena_val) if cena_val.is_integer() else cena_val)
 
+                is_montaz = self._is_montaz_item({"kod": str(d_kod), "nazev": str(d.get("NAZEV") or "")})
+                if is_montaz and not is_glass:
+                    try:
+                        cat_rec = self.ctx.db.read_by_key("tsd03", "KOD", d_kod)
+                        if cat_rec:
+                            cat_cena = float(cat_rec.get("CENA", 0) or 0)
+                            if cat_cena > 0 and (cena_val == 0 or int(cena_val) in (4500, 5000, 6000, 7500, 9000, 10500, 12000, 13500, 15000, 16500)):
+                                part_cena = str(int(cat_cena) if cat_cena.is_integer() else cat_cena)
+                    except Exception:
+                        pass
+
                 parts_list.append({
                     "kod": str(d.get("KOD") or ""),
                     "nazev": str(d.get("NAZEV") or ""),
                     "cena": part_cena,
                     "pocet": str(mnoz),
                     "is_glass": is_glass,
+                    "is_montaz": is_montaz,
                 })
 
             # If no glass items were loaded from DB, auto-load from tsd02a
