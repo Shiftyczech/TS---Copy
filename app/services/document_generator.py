@@ -22,6 +22,10 @@ class DocumentGenerator:
             app_v_dir = os.path.join(ctx.app_dir, "app", "VZORKY")
             if os.path.isdir(app_v_dir):
                 v_dir = app_v_dir
+            elif getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+                meipass_v_dir = os.path.join(sys._MEIPASS, "VZORKY")
+                if os.path.isdir(meipass_v_dir):
+                    v_dir = meipass_v_dir
         self.vzorky_dir = v_dir
 
     # ------------------------------------------------------------------

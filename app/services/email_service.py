@@ -327,7 +327,10 @@ class EmailService:
 
     def send_all_pending(self):
         """Send all unsent messages from tsd08."""
-        rows = self.ctx.db.read_all("tsd08")
+        try:
+            rows = self.ctx.db.read_where("tsd08", {"ODESLANO": None})
+        except Exception:
+            rows = [r for r in self.ctx.db.read_all("tsd08") if not r.get("ODESLANO")]
         sent = 0
         errors = []
         for r in rows:
@@ -353,9 +356,19 @@ class EmailService:
         filename = mapping.get(str(plan_code).strip().upper())
         if not filename:
             return ""
+        # 1. Next to executable
         path = os.path.join(self.ctx.app_dir, "VZORKY", filename)
         if os.path.isfile(path):
             return path
+        # 2. Inside app/VZORKY
+        path_app = os.path.join(self.ctx.app_dir, "app", "VZORKY", filename)
+        if os.path.isfile(path_app):
+            return path_app
+        # 3. Inside PyInstaller bundle (_MEIPASS)
+        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+            path_bundle = os.path.join(sys._MEIPASS, "VZORKY", filename)
+            if os.path.isfile(path_bundle):
+                return path_bundle
         return ""
 
     # Mapping of TYP_ZAKLAD numeric codes (from tsd02) to plan letter codes (A-E)

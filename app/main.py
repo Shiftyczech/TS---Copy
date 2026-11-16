@@ -22,7 +22,8 @@ def global_excepthook(type, value, tb):
     msg += "".join(traceback.format_exception(type, value, tb))
     print(msg, file=sys.stderr)
     try:
-        with open("crash.log", "a", encoding="utf-8") as f:
+        log_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else APP_DIR
+        with open(os.path.join(log_dir, "crash.log"), "a", encoding="utf-8") as f:
             f.write(msg)
     except:
         pass
@@ -156,7 +157,11 @@ class AppContext:
     def __init__(self, app_dir):
         self.app_dir = app_dir
         self.data_dir = os.path.join(self.app_dir, "DATA")
+        os.makedirs(self.data_dir, exist_ok=True)
+        os.makedirs(os.path.join(self.app_dir, "Zaloha"), exist_ok=True)
+        os.makedirs(os.path.join(self.app_dir, "_temp"), exist_ok=True)
         self.is_restarting = False
+        self.mariadb_connection_error = None
         self._cache = {}
         self._init_backend()
 
@@ -192,8 +197,11 @@ class AppContext:
                     data_path=self.data_dir
                 )
                 self.backend_name = "mariadb"
+                self.mariadb_connection_error = None
             except Exception as e:
-                print(f"[AppContext] Chyba připojení k MariaDB ({e}), přepínám na lokální SQLite...")
+                err_msg = str(e)
+                print(f"[AppContext] Chyba připojení k MariaDB ({err_msg}), přepínám na lokální SQLite...")
+                self.mariadb_connection_error = err_msg
                 from app.services.sqlite_service import SqliteService
                 self.db = SqliteService(data_dir)
                 self.backend_name = "sqlite"
@@ -377,7 +385,7 @@ if __name__ == "__main__":
         print(crash_msg, file=sys.stderr)
         
         try:
-            with open("crash.log", "w", encoding="utf-8") as f:
+            with open(os.path.join(BASE_DIR, "crash.log"), "w", encoding="utf-8") as f:
                 f.write(crash_msg)
         except Exception:
             pass

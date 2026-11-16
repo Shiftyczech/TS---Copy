@@ -421,7 +421,13 @@ class SqliteService:
         params = []
         for field, value in conditions.items():
             f_upper = field.upper()
+            if value is None:
+                where_parts.append(f'"{f_upper}" IS NULL')
+                continue
             val = self._serialize_val(value)
+            if val is None:
+                where_parts.append(f'"{f_upper}" IS NULL')
+                continue
             try:
                 num_val = float(val) if val not in (None, "") else None
             except (ValueError, TypeError):
@@ -604,7 +610,13 @@ class SqliteService:
         params = []
         for field, value in conditions.items():
             f_upper = field.upper()
+            if value is None:
+                where_parts.append(f'"{f_upper}" IS NULL')
+                continue
             val = self._serialize_val(value)
+            if val is None:
+                where_parts.append(f'"{f_upper}" IS NULL')
+                continue
             try:
                 num_val = float(val) if val not in (None, "") else None
             except (ValueError, TypeError):
@@ -788,6 +800,21 @@ class SqliteService:
             return row[0] if row else 0
         except Exception:
             return 0
+
+    def get_column_values(self, table_name: str, column: str) -> list[Any]:
+        """Fetch distinct non-null values for a single column efficiently."""
+        tbl = self._clean_table_name(table_name)
+        col = column.upper()
+        cols = self._get_table_columns(tbl)
+        if col not in cols:
+            return []
+        conn = self._get_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute(f'SELECT DISTINCT "{col}" FROM "{tbl}" WHERE "{col}" IS NOT NULL AND "{col}" != "";')
+            return [r[0] for r in cur.fetchall()]
+        except Exception:
+            return []
 
     def get_max_value(self, table_name: str, field: str):
         tbl = self._clean_table_name(table_name)

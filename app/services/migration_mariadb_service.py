@@ -65,6 +65,24 @@ class SqliteToMariaDbMigrator:
         sqlite_conn = sqlite3.connect(self.sqlite_path, timeout=30.0)
         sqlite_cur = sqlite_conn.cursor()
 
+        # Ensure database exists on MariaDB server
+        init_conn = pymysql.connect(
+            host=self.host,
+            port=self.port,
+            user=self.user,
+            password=self.password,
+            charset="utf8mb4",
+            autocommit=True
+        )
+        try:
+            with init_conn.cursor() as init_cur:
+                init_cur.execute(
+                    f"CREATE DATABASE IF NOT EXISTS `{self.database}` "
+                    "CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+                )
+        finally:
+            init_conn.close()
+
         # Connect MariaDB
         maria_conn = pymysql.connect(
             host=self.host,
@@ -73,7 +91,8 @@ class SqliteToMariaDbMigrator:
             password=self.password,
             database=self.database,
             charset="utf8mb4",
-            autocommit=False
+            autocommit=False,
+            init_command="SET sql_mode = 'NO_ENGINE_SUBSTITUTION';"
         )
 
         stats = {}
@@ -162,17 +181,33 @@ class SqliteToMariaDbMigrator:
                                         except (ValueError, TypeError):
                                             val = None
                                 elif c_i in date_col_indices:
-                                    if val is None or val == "" or str(val).strip().lower() in ("none", "null"):
+                                    if val is None or val == "" or str(val).strip().lower() in ("none", "null", "00.00.0000", "0000-00-00"):
                                         val = None
+                                    elif isinstance(val, (datetime.date, datetime.datetime)):
+                                        val = val.strftime("%Y-%m-%d")
                                     elif isinstance(val, str):
                                         val = val.strip()
-                                        if len(val) >= 10:
+                                        if "." in val:
+                                            parts = val.split(".")
+                                            if len(parts) == 3:
+                                                try:
+                                                    d = int(parts[0].strip())
+                                                    m = int(parts[1].strip())
+                                                    y = int(parts[2].strip())
+                                                    if y < 100:
+                                                        y += 2000 if y < 50 else 1900
+                                                    val = f"{y:04d}-{m:02d}-{d:02d}"
+                                                except Exception:
+                                                    val = None
+                                        elif len(val) >= 10 and val[4] == "-" and val[7] == "-":
+                                            val = val[:10]
+                                        else:
                                             try:
-                                                val = datetime.date.fromisoformat(val[:10])
+                                                val = datetime.date.fromisoformat(val[:10]).strftime("%Y-%m-%d")
                                             except Exception:
                                                 val = None
-                                        else:
-                                            val = None
+                                    else:
+                                        val = None
                                 elif isinstance(val, str):
                                     val = val.strip()
                                 row_vals.append(val)

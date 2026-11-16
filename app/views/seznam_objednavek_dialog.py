@@ -419,14 +419,28 @@ class SeznamObjednavekDialog(QDialog):
         return os.path.join(data_dir, "route_orders.json")
 
     def _load_custom_order(self):
+        # 1. Try local route_orders.json
         path = self._get_route_orders_path()
         if os.path.exists(path):
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    return data.get(str(self.trasa_filter), [])
+                    val = data.get(str(self.trasa_filter), [])
+                    if val:
+                        return val
             except Exception:
                 pass
+
+        # 2. Try shared database table tsd05a (so both PC 1 and PC 2 see the same stop order)
+        try:
+            if hasattr(self.ctx, "db") and self.ctx.db:
+                recs = self.ctx.db.read_where("tsd05a", {"CISLO": str(self.trasa_filter)})
+                if recs:
+                    recs.sort(key=lambda x: int(x.get("PORADI", 0) or 0))
+                    return [str(x.get("CISLO_OBJ")) for x in recs if x.get("CISLO_OBJ")]
+        except Exception:
+            pass
+
         return []
 
     def _save_custom_order(self):
@@ -447,10 +461,32 @@ class SeznamObjednavekDialog(QDialog):
                 
         data[str(self.trasa_filter)] = current_order
         try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(data, f)
         except Exception as e:
             print(f"Error saving custom order: {e}")
+
+        # Also sync to shared database table tsd05a for multi-PC consistency
+        try:
+            if hasattr(self.ctx, "db") and self.ctx.db:
+                self.ctx.db.delete_where("tsd05a", {"CISLO": str(self.trasa_filter)})
+                batch = []
+                for idx, cislo_obj in enumerate(current_order):
+                    batch.append({
+                        "CISLO": str(self.trasa_filter),
+                        "CISLO_OBJ": cislo_obj,
+                        "PORADI": idx + 1,
+                        "PLATNOST": 1
+                    })
+                if batch:
+                    if hasattr(self.ctx.db, "batch_insert"):
+                        self.ctx.db.batch_insert("tsd05a", batch)
+                    else:
+                        for row in batch:
+                            self.ctx.db.insert("tsd05a", row)
+        except Exception as e:
+            print(f"Error syncing custom order to DB tsd05a: {e}")
 
     def _display(self, rows):
         self.table.blockSignals(True)

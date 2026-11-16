@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=['..'],
     binaries=[],
-    datas=[('styles', 'styles')],
+    datas=[('styles', 'styles'), ('VZORKY', 'VZORKY')],
     hiddenimports=['default_symbols', 'PySide6.QtPrintSupport', 'encodings.idna', 'encodings.cp1250', 'pymysql', 'app.version'],
     hookspath=[],
     hooksconfig={},

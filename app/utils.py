@@ -99,9 +99,12 @@ def get_free_order_numbers(ctx, max_lookback: int = 500) -> tuple[int, list[int]
 
     for table in ("tsd04", "tsd06"):
         try:
-            rows = ctx.db.read_all(table)
-            for r in rows:
-                raw = r.get("CISLO_OBJ")
+            if hasattr(ctx.db, "get_column_values"):
+                vals = ctx.db.get_column_values(table, "CISLO_OBJ")
+            else:
+                rows = ctx.db.read_all(table)
+                vals = [r.get("CISLO_OBJ") for r in rows]
+            for raw in vals:
                 if raw is not None and str(raw).strip():
                     try:
                         val = int(float(str(raw).strip()))

@@ -316,6 +316,19 @@ class DbfService:
         finally:
             self._close_table(table)
 
+    def get_column_values(self, table_name: str, column: str) -> list[Any]:
+        col = column.upper()
+        try:
+            rows = self.read_all(table_name)
+            res = set()
+            for r in rows:
+                v = r.get(col)
+                if v is not None and str(v).strip():
+                    res.add(v)
+            return list(res)
+        except Exception:
+            return []
+
     def get_max_value(self, table_name: str, field: str):
         table = self.open_table_readonly(table_name)
         try:

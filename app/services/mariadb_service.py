@@ -46,6 +46,8 @@ class MariaDbService:
         self._all_connections = []
         self._column_cache = {}
         self._date_columns_cache = {}
+        self._int_columns_cache = {}
+        self._float_columns_cache = {}
 
         self._ensure_database()
 
@@ -59,7 +61,8 @@ class MariaDbService:
             database=self.database if select_db else None,
             charset="utf8mb4",
             connect_timeout=self.connect_timeout,
-            autocommit=True
+            autocommit=True,
+            init_command="SET sql_mode = 'NO_ENGINE_SUBSTITUTION';"
         )
 
     def _ensure_database(self):
@@ -110,6 +113,8 @@ class MariaDbService:
         self._local.conn = None
         self._column_cache.clear()
         self._date_columns_cache.clear()
+        self._int_columns_cache.clear()
+        self._float_columns_cache.clear()
 
     def _clean_table_name(self, table_name: str) -> str:
         """Strip path and extension and return lower-case table name."""
@@ -140,12 +145,26 @@ class MariaDbService:
                     if not rows:
                         return []
                     cols = [r[0].upper() for r in rows if r[0].upper() not in ("_RECNO", "ROWID")]
-                    date_cols = {
-                        r[0].upper() for r in rows
-                        if "DATE" in r[1].upper() or r[0].upper().startswith("DATUM")
-                    }
+                    date_cols = set()
+                    int_cols = set()
+                    float_cols = set()
+
+                    for r in rows:
+                        c_name = r[0].upper()
+                        d_type = (r[1] or "").upper()
+                        if c_name in ("_RECNO", "ROWID"):
+                            continue
+                        if any(t in d_type for t in ("INT", "BIGINT", "SMALLINT", "TINYINT", "MEDIUMINT")):
+                            int_cols.add(c_name)
+                        elif any(t in d_type for t in ("DECIMAL", "NUMERIC", "FLOAT", "DOUBLE", "REAL")):
+                            float_cols.add(c_name)
+                        elif any(t in d_type for t in ("DATE", "DATETIME", "TIMESTAMP")) or c_name.startswith("DATUM"):
+                            date_cols.add(c_name)
+
                     self._column_cache[tbl] = cols
                     self._date_columns_cache[tbl] = date_cols
+                    self._int_columns_cache[tbl] = int_cols
+                    self._float_columns_cache[tbl] = float_cols
             except Exception:
                 return []
         return self._column_cache.get(tbl, [])
@@ -191,6 +210,69 @@ class MariaDbService:
             return 1 if val else 0
         if isinstance(val, str):
             return val.strip()
+        return val
+
+    def _clean_val_for_column(self, table_name: str, col_name: str, val: Any) -> Any:
+        """Sanitize values for MariaDB strict mode based on column type."""
+        tbl = self._clean_table_name(table_name)
+        col_upper = col_name.upper()
+
+        if tbl not in self._column_cache:
+            self._get_table_columns(tbl)
+
+        int_cols = self._int_columns_cache.get(tbl, set())
+        float_cols = self._float_columns_cache.get(tbl, set())
+        date_cols = self._date_columns_cache.get(tbl, set())
+
+        if col_upper in int_cols:
+            if val is None or val == "" or (isinstance(val, str) and val.strip().lower() in ("none", "null")):
+                return None
+            try:
+                clean_str = str(val).strip().replace(" ", "").replace(",", ".")
+                return int(float(clean_str))
+            except (ValueError, TypeError):
+                return None
+
+        if col_upper in float_cols:
+            if val is None or val == "" or (isinstance(val, str) and val.strip().lower() in ("none", "null")):
+                return None
+            try:
+                clean_str = str(val).strip().replace(" ", "").replace(",", ".")
+                return float(clean_str)
+            except (ValueError, TypeError):
+                return None
+
+        if col_upper in date_cols:
+            if val is None or val == "" or (isinstance(val, str) and val.strip().lower() in ("none", "null", "00.00.0000", "0000-00-00")):
+                return None
+            if isinstance(val, (datetime.date, datetime.datetime)):
+                return val.strftime("%Y-%m-%d")
+            if isinstance(val, str):
+                s = val.strip()
+                if "." in s:
+                    parts = s.split(".")
+                    if len(parts) == 3:
+                        try:
+                            d = int(parts[0].strip())
+                            m = int(parts[1].strip())
+                            y = int(parts[2].strip())
+                            if y < 100:
+                                y += 2000 if y < 50 else 1900
+                            return f"{y:04d}-{m:02d}-{d:02d}"
+                        except Exception:
+                            return None
+                elif len(s) >= 10 and s[4] == "-" and s[7] == "-":
+                    return s[:10]
+                try:
+                    return datetime.date.fromisoformat(s[:10]).strftime("%Y-%m-%d")
+                except Exception:
+                    return None
+            return None
+
+        if isinstance(val, str):
+            return val.strip()
+        if isinstance(val, bool):
+            return 1 if val else 0
         return val
 
     @contextmanager
@@ -271,7 +353,13 @@ class MariaDbService:
         params = []
         for field, value in conditions.items():
             f_upper = field.upper()
-            val = self._serialize_val(value)
+            if value is None:
+                where_parts.append(f"`{f_upper}` IS NULL")
+                continue
+            val = self._clean_val_for_column(tbl, f_upper, value)
+            if val is None:
+                where_parts.append(f"`{f_upper}` IS NULL")
+                continue
             try:
                 num_val = float(val) if val not in (None, "") else None
             except (ValueError, TypeError):
@@ -334,7 +422,7 @@ class MariaDbService:
     def insert(self, table_name: str, data: dict):
         tbl = self._clean_table_name(table_name)
         cols = self._get_table_columns(tbl)
-        clean = {k.upper(): self._serialize_val(v) for k, v in data.items() if k.upper() != "_RECNO"}
+        clean = {k.upper(): self._clean_val_for_column(tbl, k, v) for k, v in data.items() if k.upper() != "_RECNO"}
         if not clean:
             return
 
@@ -359,7 +447,7 @@ class MariaDbService:
         cols = self._get_table_columns(tbl)
         key_col = key_field.upper()
 
-        clean = {k.upper(): self._serialize_val(v) for k, v in data.items() if k.upper() != "_RECNO" and k.upper() in cols}
+        clean = {k.upper(): self._clean_val_for_column(tbl, k, v) for k, v in data.items() if k.upper() != "_RECNO" and k.upper() in cols}
         if not clean:
             return 0
 
@@ -394,7 +482,7 @@ class MariaDbService:
         tbl = self._clean_table_name(table_name)
         cols = self._get_table_columns(tbl)
 
-        clean = {k.upper(): self._serialize_val(v) for k, v in data.items() if k.upper() != "_RECNO" and k.upper() in cols}
+        clean = {k.upper(): self._clean_val_for_column(tbl, k, v) for k, v in data.items() if k.upper() != "_RECNO" and k.upper() in cols}
         if not clean:
             return
 
@@ -458,7 +546,13 @@ class MariaDbService:
         params = []
         for field, value in conditions.items():
             f_upper = field.upper()
-            val = self._serialize_val(value)
+            if value is None:
+                where_parts.append(f"`{f_upper}` IS NULL")
+                continue
+            val = self._clean_val_for_column(tbl, f_upper, value)
+            if val is None:
+                where_parts.append(f"`{f_upper}` IS NULL")
+                continue
             try:
                 num_val = float(val) if val not in (None, "") else None
             except (ValueError, TypeError):
@@ -510,7 +604,7 @@ class MariaDbService:
         records = []
         for r in rows:
             clean_row = {k.upper(): v for k, v in r.items()}
-            records.append(tuple(self._serialize_val(clean_row.get(c)) for c in insert_cols))
+            records.append(tuple(self._clean_val_for_column(tbl, c, clean_row.get(c)) for c in insert_cols))
 
         conn = self._get_connection()
         try:
@@ -532,14 +626,14 @@ class MariaDbService:
         try:
             with conn.cursor() as cur:
                 for k_val, fields in updates.items():
-                    clean = {k.upper(): self._serialize_val(v) for k, v in fields.items() if k.upper() != "_RECNO" and k.upper() in cols}
+                    clean = {k.upper(): self._clean_val_for_column(tbl, k, v) for k, v in fields.items() if k.upper() != "_RECNO" and k.upper() in cols}
                     if not clean:
                         continue
 
                     set_clause = ", ".join(f"`{c}` = %s" for c in clean.keys())
                     params = list(clean.values())
 
-                    val = self._serialize_val(k_val)
+                    val = self._clean_val_for_column(tbl, key_col, k_val)
                     try:
                         num_val = float(val) if val not in (None, "") else None
                     except (ValueError, TypeError):
@@ -623,6 +717,21 @@ class MariaDbService:
         except Exception:
             return 0
 
+    def get_column_values(self, table_name: str, column: str) -> list[Any]:
+        """Fetch distinct non-null values for a single column efficiently."""
+        tbl = self._clean_table_name(table_name)
+        col = column.upper()
+        cols = self._get_table_columns(tbl)
+        if col not in cols:
+            return []
+        conn = self._get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT DISTINCT `{col}` FROM `{tbl}` WHERE `{col}` IS NOT NULL AND `{col}` != '';")
+                return [r[0] for r in cur.fetchall()]
+        except Exception:
+            return []
+
     def get_max_value(self, table_name: str, field: str):
         tbl = self._clean_table_name(table_name)
         f_upper = field.upper()
@@ -650,7 +759,8 @@ def test_mariadb_connection(host: str, port: int, user: str, password: str, data
             port=int(port),
             user=user,
             password=password,
-            connect_timeout=5
+            connect_timeout=5,
+            init_command="SET sql_mode = 'NO_ENGINE_SUBSTITUTION';"
         )
         try:
             with conn.cursor() as cur:

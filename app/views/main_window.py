@@ -165,10 +165,18 @@ class MainWindow(QMainWindow):
 
         # Status bar for free numbers & system status
         self.status_bar = self.statusBar()
+        self.lbl_db_backend_status = QLabel("")
+        self.status_bar.addWidget(self.lbl_db_backend_status)
+        self._update_db_backend_status()
+
         self.lbl_free_numbers_status = QLabel("")
         self.lbl_free_numbers_status.setStyleSheet("padding: 2px 10px; font-weight: bold;")
         self.status_bar.addPermanentWidget(self.lbl_free_numbers_status)
         self._update_free_numbers_status()
+
+        # Alert if MariaDB connection failed at startup
+        if getattr(self.ctx, "mariadb_connection_error", None):
+            QTimer.singleShot(800, self._show_mariadb_connection_warning)
 
         # --- Setup menus ---
         self._setup_menus()
@@ -212,6 +220,7 @@ class MainWindow(QMainWindow):
         self.act_psc = self.menu_servis.addAction("Poštovní směrovací čísla")
         self.menu_servis.addSeparator()
         self.act_zaloha = self.menu_servis.addAction("Záloha a obnovení")
+        self.act_mariadb = self.menu_servis.addAction("Centrální databáze MariaDB (Synology)")
         self.act_migrace = self.menu_servis.addAction("Převod databáze (DBF ↔ SQLite)")
         self.menu_servis.addSeparator()
         self.act_aktualizace = self.menu_servis.addAction("Zkontrolovat aktualizace...")
@@ -252,6 +261,7 @@ class MainWindow(QMainWindow):
         self.act_uzivatele.triggered.connect(self._open_uzivatele)
         self.act_psc.triggered.connect(self._open_psc)
         self.act_zaloha.triggered.connect(self._open_zaloha)
+        self.act_mariadb.triggered.connect(self._open_migrace_mariadb)
         self.act_migrace.triggered.connect(self._open_migrace_db)
         self.act_aktualizace.triggered.connect(lambda: self._check_updates(manual=True))
 
@@ -305,6 +315,44 @@ class MainWindow(QMainWindow):
         self.password_edit.setReadOnly(True)
         self.password_edit.setStyleSheet("background-color: #2E7D32; color: white;")
         self._update_free_numbers_status()
+
+    def _update_db_backend_status(self):
+        backend = getattr(self.ctx, "backend_name", "").lower()
+        if backend == "mariadb":
+            host = getattr(self.ctx.db, "host", "Synology")
+            self.lbl_db_backend_status.setText(f"🟢 Centrální DB: Synology MariaDB ({host})")
+            self.lbl_db_backend_status.setStyleSheet(
+                "color: #4CAF50; font-weight: bold; padding: 2px 8px; "
+                "border: 1px solid #388E3C; border-radius: 4px; background: rgba(76, 175, 80, 0.1);"
+            )
+            self.lbl_db_backend_status.setToolTip("Aplikace je připojena k centrální databázi na Synology. Změny se okamžitě projevují na všech počítačích.")
+        elif backend == "sqlite":
+            self.lbl_db_backend_status.setText("🟠 Lokální DB: SQLite (pouze tento počítač)")
+            self.lbl_db_backend_status.setStyleSheet(
+                "color: #FFA726; font-weight: bold; padding: 2px 8px; "
+                "border: 1px solid #F57C00; border-radius: 4px; background: rgba(255, 167, 38, 0.1);"
+            )
+            self.lbl_db_backend_status.setToolTip("Aplikace běží v lokálním režimu SQLite. Změny se neukládají na Synology ani na jiný počítač.")
+        else:
+            self.lbl_db_backend_status.setText("🟡 Lokální DB: DBF (starý formát)")
+            self.lbl_db_backend_status.setStyleSheet(
+                "color: #FDD835; font-weight: bold; padding: 2px 8px; "
+                "border: 1px solid #FBC02D; border-radius: 4px; background: rgba(253, 216, 53, 0.1);"
+            )
+
+    def _show_mariadb_connection_warning(self):
+        err = getattr(self.ctx, "mariadb_connection_error", "")
+        QMessageBox.warning(
+            self,
+            "Upozornění: Připojení k centrální MariaDB selhalo",
+            "Nepodařilo se připojit k centrální databázi MariaDB na Synology NAS.\n\n"
+            "Aplikace byla automaticky spuštěna v nouzovém lokálním režimu (SQLite).\n"
+            "Změny provedené nyní se NEBUDOU sdílet s druhým počítačem!\n\n"
+            "Zkontrolujte prosím:\n"
+            "1. Zda je Synology NAS zapnuté a dostupné na lokální síti.\n"
+            "2. Zda funguje připojení k síti (Wi-Fi nebo LAN kabel).\n\n"
+            f"Detail chyby:\n{err}"
+        )
 
     def _update_free_numbers_status(self):
         try:
@@ -522,6 +570,13 @@ class MainWindow(QMainWindow):
         from app.views.konfigurace_dialog import KonfiguraceDialog
         dlg = KonfiguraceDialog(self.ctx, parent=self)
         dlg.exec()
+        self._update_db_backend_status()
+
+    def _open_migrace_mariadb(self):
+        from app.views.migrace_mariadb_dialog import MigraceMariaDbDialog
+        dlg = MigraceMariaDbDialog(self.ctx, parent=self)
+        dlg.exec()
+        self._update_db_backend_status()
 
     def _open_uzivatele(self):
         from app.views.uzivatele_dialog import UzivateleDialog
