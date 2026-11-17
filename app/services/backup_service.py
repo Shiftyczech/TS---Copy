@@ -162,6 +162,78 @@ class BackupService:
 
             f.write("SET FOREIGN_KEY_CHECKS=1;\n")
 
+    def _sync_mariadb_to_sqlite(self):
+        """Mirror current MariaDB tables into local SQLite ts_data.db as offline cache and backup."""
+        if getattr(self.ctx, "backend_name", "") != "mariadb" or not getattr(self.ctx, "db", None):
+            return
+        conn = getattr(self.ctx.db, "_get_connection", lambda: None)()
+        if not conn:
+            return
+
+        import sqlite3
+        sqlite_file = os.path.join(self.data_dir, "ts_data.db")
+        os.makedirs(self.data_dir, exist_ok=True)
+
+        try:
+            sq_conn = sqlite3.connect(sqlite_file, timeout=30.0)
+            sq_cur = sq_conn.cursor()
+
+            with conn.cursor() as cur:
+                cur.execute("SHOW TABLES;")
+                tables = [r[0] for r in cur.fetchall()]
+
+                for tbl in tables:
+                    cur.execute(
+                        "SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS "
+                        "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s ORDER BY ORDINAL_POSITION;",
+                        (self.ctx.db.database, tbl)
+                    )
+                    cols_info = cur.fetchall()
+                    if not cols_info:
+                        continue
+
+                    data_cols = []
+                    col_defs = []
+                    for c_name, d_type in cols_info:
+                        cu = c_name.upper()
+                        dt = (d_type or "").upper()
+                        if cu in ("_RECNO", "ROWID"):
+                            continue
+                        data_cols.append(cu)
+                        if any(t in dt for t in ("INT", "BIGINT", "SMALLINT", "TINYINT")):
+                            sq_t = "INTEGER"
+                        elif any(t in dt for t in ("FLOAT", "DOUBLE", "DECIMAL", "NUMERIC", "REAL")):
+                            sq_t = "REAL"
+                        elif "DATE" in dt or cu.startswith("DATUM"):
+                            sq_t = "DATE"
+                        else:
+                            sq_t = "TEXT"
+                        col_defs.append(f'"{cu}" {sq_t}')
+
+                    if not data_cols:
+                        continue
+
+                    sq_cur.execute(f'DROP TABLE IF EXISTS "{tbl}";')
+                    sq_cur.execute(f'CREATE TABLE "{tbl}" ({", ".join(col_defs)});')
+
+                    col_str = ", ".join(f"`{c}`" for c in data_cols)
+                    cur.execute(f"SELECT {col_str} FROM `{tbl}`;")
+                    rows = cur.fetchall()
+                    if rows:
+                        clean_rows = []
+                        for r in rows:
+                            clean_rows.append(tuple(
+                                v.strftime("%Y-%m-%d") if isinstance(v, (datetime.date, datetime.datetime)) else v
+                                for v in r
+                            ))
+                        placeholders = ", ".join("?" for _ in data_cols)
+                        sq_cur.executemany(f'INSERT INTO "{tbl}" ({", ".join(f"`{c}`" for c in data_cols)}) VALUES ({placeholders});', clean_rows)
+
+            sq_conn.commit()
+            sq_conn.close()
+        except Exception as e:
+            print(f"[BackupService] Error syncing MariaDB to local SQLite: {e}")
+
     def backup_local(self, dest_dir, progress_cb=None):
         """Create a ZIP backup of the DATA folder (and MariaDB dump if active) to dest_dir."""
         if hasattr(self.ctx, "db") and self.ctx.db and hasattr(self.ctx.db, "checkpoint"):
@@ -170,9 +242,13 @@ class BackupService:
             except Exception as e:
                 print(f"[BackupService] Checkpoint error: {e}")
 
-        # Dump MariaDB to SQL file inside DATA if active
+        # Dump MariaDB to SQL file and mirror to local SQLite inside DATA if active
         mariadb_sql_path = None
         if getattr(self.ctx, "backend_name", "") == "mariadb":
+            try:
+                self._sync_mariadb_to_sqlite()
+            except Exception as e:
+                print(f"[BackupService] MariaDB to SQLite sync error: {e}")
             try:
                 mariadb_sql_path = os.path.join(self.data_dir, "mariadb_backup.sql")
                 self._dump_mariadb(mariadb_sql_path)
