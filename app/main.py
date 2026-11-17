@@ -259,12 +259,15 @@ class AppContext:
 
     def restart_application(self):
         """Restart application smoothly."""
+        import os
         import sys
         from PySide6.QtCore import QProcess
         from PySide6.QtWidgets import QApplication
         
         self.is_restarting = True
         self.close_db()
+        for var in ("_MEIPASS2", "_MEIPASS", "PYTHONPATH", "PYTHONHOME"):
+            os.environ.pop(var, None)
         QProcess.startDetached(sys.executable, sys.argv[1:])
         app = QApplication.instance()
         if app:

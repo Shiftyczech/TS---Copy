@@ -51,6 +51,17 @@ class UpdateInfo:
         self.release_notes = release_notes
 
 
+def _safe_urlopen(req, timeout: int = 30):
+    """Open URL with automatic fallback to unverified SSL context if system root certificates fail."""
+    import ssl
+    try:
+        ctx = ssl.create_default_context()
+        return urllib.request.urlopen(req, timeout=timeout, context=ctx)
+    except (ssl.SSLError, urllib.error.URLError, Exception):
+        ctx = ssl._create_unverified_context()
+        return urllib.request.urlopen(req, timeout=timeout, context=ctx)
+
+
 def check_for_updates() -> Optional[UpdateInfo]:
     """Check GitHub API for the latest release."""
     api_url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -65,16 +76,7 @@ def check_for_updates() -> Optional[UpdateInfo]:
     )
 
     try:
-        import ssl
-        try:
-            ctx = ssl.create_default_context()
-            resp_cm = urllib.request.urlopen(req, timeout=10, context=ctx)
-        except (ssl.SSLError, Exception):
-            # Fallback if local machine has certificate store issues
-            ctx = ssl._create_unverified_context()
-            resp_cm = urllib.request.urlopen(req, timeout=10, context=ctx)
-
-        with resp_cm as resp:
+        with _safe_urlopen(req, timeout=10) as resp:
             if resp.status != 200:
                 return None
             data = json.loads(resp.read().decode("utf-8"))
@@ -133,70 +135,89 @@ def download_and_install_update(download_url: str, progress_callback: Optional[C
         headers={"User-Agent": "TS-Evidence-Skleniky"}
     )
 
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        total_size = int(resp.headers.get("Content-Length", 0))
-        downloaded = 0
-        chunk_size = 64 * 1024
+    try:
+        with _safe_urlopen(req, timeout=60) as resp:
+            total_size = int(resp.headers.get("Content-Length", 0))
+            downloaded = 0
+            chunk_size = 64 * 1024
 
-        with open(temp_new_exe, "wb") as f:
-            while True:
-                chunk = resp.read(chunk_size)
-                if not chunk:
+            with open(temp_new_exe, "wb") as f:
+                while True:
+                    chunk = resp.read(chunk_size)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if total_size > 0 and progress_callback:
+                        pct = int((downloaded / total_size) * 100)
+                        progress_callback(min(pct, 99))
+
+            # Verify that download was not severed prematurely
+            if total_size > 0 and downloaded < total_size:
+                raise RuntimeError(
+                    f"Stahování aktualizace bylo přerušeno (staženo {downloaded} z {total_size} bajtů). Zkuste to prosím znovu."
+                )
+            if downloaded < 5 * 1024 * 1024:
+                raise RuntimeError(
+                    f"Stažený soubor je nekompletní nebo poškozený ({downloaded} bajtů). Zkuste to prosím znovu."
+                )
+
+        if progress_callback:
+            progress_callback(100)
+
+        # Atomic swap on Windows: rename running .exe to .old, move .tmp into place
+        import time
+        old_exe = target_exe + ".old"
+        if os.path.exists(old_exe):
+            for _ in range(5):
+                try:
+                    os.remove(old_exe)
                     break
-                f.write(chunk)
-                downloaded += len(chunk)
-                if total_size > 0 and progress_callback:
-                    pct = int((downloaded / total_size) * 100)
-                    progress_callback(min(pct, 99))
+                except Exception:
+                    time.sleep(0.3)
 
-    if progress_callback:
-        progress_callback(100)
+        # If old_exe is still locked, use a timestamped backup name
+        if os.path.exists(old_exe):
+            old_exe = f"{target_exe}.old.{int(time.time())}"
 
-    # Atomic swap on Windows: rename running .exe to .old, move .tmp into place
-    import time
-    old_exe = target_exe + ".old"
-    if os.path.exists(old_exe):
-        for _ in range(5):
+        # Rename current running .exe (Windows allows renaming running binaries)
+        renamed = False
+        for i in range(6):
             try:
-                os.remove(old_exe)
+                os.rename(target_exe, old_exe)
+                renamed = True
                 break
             except Exception:
-                time.sleep(0.3)
+                if i == 5:
+                    raise
+                time.sleep(0.4)
 
-    # If old_exe is still locked, use a timestamped backup name
-    if os.path.exists(old_exe):
-        old_exe = f"{target_exe}.old.{int(time.time())}"
+        # Move downloaded .tmp into target_exe position
+        for i in range(6):
+            try:
+                if hasattr(os, "replace"):
+                    os.replace(temp_new_exe, target_exe)
+                else:
+                    os.rename(temp_new_exe, target_exe)
+                break
+            except Exception:
+                if i == 5:
+                    # If moving failed, try to restore original exe
+                    if renamed and os.path.exists(old_exe):
+                        try:
+                            os.rename(old_exe, target_exe)
+                        except Exception:
+                            pass
+                    raise
+                time.sleep(0.4)
 
-    # Rename current running .exe (Windows allows renaming running binaries)
-    renamed = False
-    for i in range(6):
-        try:
-            os.rename(target_exe, old_exe)
-            renamed = True
-            break
-        except Exception:
-            if i == 5:
-                raise
-            time.sleep(0.4)
-
-    # Move downloaded .tmp into target_exe position
-    for i in range(6):
-        try:
-            if hasattr(os, "replace"):
-                os.replace(temp_new_exe, target_exe)
-            else:
-                os.rename(temp_new_exe, target_exe)
-            break
-        except Exception:
-            if i == 5:
-                # If moving failed, try to restore original exe
-                if renamed and os.path.exists(old_exe):
-                    try:
-                        os.rename(old_exe, target_exe)
-                    except Exception:
-                        pass
-                raise
-            time.sleep(0.4)
-
-    # File swap successfully finished. Return True so caller on GUI thread can restart cleanly.
-    return True
+        # File swap successfully finished. Return True so caller on GUI thread can restart cleanly.
+        return True
+    except Exception:
+        # Clean up temporary downloaded file if anything went wrong
+        if os.path.exists(temp_new_exe):
+            try:
+                os.remove(temp_new_exe)
+            except Exception:
+                pass
+        raise

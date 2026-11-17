@@ -112,6 +112,7 @@ class UpdateDialog(QDialog):
 
     def _on_finished(self, ok: bool, err_msg: str):
         if ok:
+            import os
             import sys
             from PySide6.QtCore import QProcess
             from PySide6.QtWidgets import QApplication
@@ -125,6 +126,10 @@ class UpdateDialog(QDialog):
                     parent.ctx.close_db()
 
             self.accept()
+
+            # Clean PyInstaller environment variables so new process extracts its own fresh environment
+            for var in ("_MEIPASS2", "_MEIPASS", "PYTHONPATH", "PYTHONHOME"):
+                os.environ.pop(var, None)
 
             QProcess.startDetached(sys.executable, sys.argv[1:])
             app = QApplication.instance()
