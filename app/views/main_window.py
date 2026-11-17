@@ -599,6 +599,25 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def closeEvent(self, event):
+        # Stop background update worker cleanly first if running
+        if hasattr(self, "_update_worker") and self._update_worker is not None:
+            try:
+                if self._update_worker.isRunning():
+                    self._update_worker.quit()
+                    if not self._update_worker.wait(1000):
+                        self._update_worker.terminate()
+            except Exception:
+                pass
+
+        # Stop archive worker if active
+        if hasattr(self, "_archive_worker") and self._archive_worker is not None:
+            try:
+                if self._archive_worker.isRunning():
+                    self._archive_worker.quit()
+                    self._archive_worker.wait(1000)
+            except Exception:
+                pass
+
         # Skip backup dialog if restarting smoothly (e.g. after update or restore)
         if getattr(self, "_is_restarting_for_update", False) or getattr(self.ctx, "is_restarting", False):
             event.accept()
@@ -607,33 +626,37 @@ class MainWindow(QMainWindow):
         from app.services.backup_service import BackupService
         svc = BackupService(self.ctx)
 
-        if not svc.auto_backup:
-            event.accept()
-            return
+        if svc.auto_backup:
+            reply = QMessageBox.question(
+                self,
+                "Automatická záloha",
+                "Chcete před ukončením aplikace provést zálohu dat?",
+                QMessageBox.Yes | QMessageBox.No
+            )
 
-        reply = QMessageBox.question(
-            self,
-            "Automatická záloha",
-            "Chcete před ukončením aplikace provést zálohu dat?",
-            QMessageBox.Yes | QMessageBox.No
-        )
+            if reply == QMessageBox.Yes:
+                progress = QProgressDialog("Probíhá záloha dat...\nProsím čekejte.", None, 0, 0, self)
+                progress.setWindowTitle("Záloha")
+                progress.setWindowModality(Qt.WindowModal)
+                progress.setMinimumDuration(0)
+                progress.show()
 
-        if reply == QMessageBox.Yes:
-            progress = QProgressDialog("Probíhá záloha dat...\nProsím čekejte.", None, 0, 0, self)
-            progress.setWindowTitle("Záloha")
-            progress.setWindowModality(Qt.WindowModal)
-            progress.setMinimumDuration(0)
-            progress.show()
+                from PySide6.QtWidgets import QApplication
+                QApplication.processEvents()
 
-            from PySide6.QtWidgets import QApplication
-            QApplication.processEvents()
+                try:
+                    svc.auto_daily_backup()
+                except Exception as e:
+                    QMessageBox.warning(self, "Chyba zálohy", f"Zálohování selhalo:\n{e}")
 
+                progress.close()
+
+        # Cleanly release database connections and locks
+        if hasattr(self, "ctx") and self.ctx:
             try:
-                svc.auto_daily_backup()
-            except Exception as e:
-                QMessageBox.warning(self, "Chyba zálohy", f"Zálohování selhalo:\n{e}")
-
-            progress.close()
+                self.ctx.close_db()
+            except Exception:
+                pass
 
         event.accept()
 

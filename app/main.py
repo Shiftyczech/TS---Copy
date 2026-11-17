@@ -337,10 +337,35 @@ def load_stylesheet(app):
 
 
 
+def cleanup_orphaned_mei_dirs():
+    """Clean up leftover _MEI temporary folders from previous closed runs in %TEMP%."""
+    import tempfile
+    import shutil
+    try:
+        temp_dir = tempfile.gettempdir()
+        current_mei = os.path.abspath(getattr(sys, "_MEIPASS", ""))
+        for entry in os.listdir(temp_dir):
+            if entry.startswith("_MEI"):
+                full_path = os.path.join(temp_dir, entry)
+                if current_mei and os.path.abspath(full_path) == current_mei:
+                    continue
+                try:
+                    shutil.rmtree(full_path, ignore_errors=True)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
 def main():
     try:
         from app.services.github_updater import cleanup_old_executable
         cleanup_old_executable()
+    except Exception:
+        pass
+
+    try:
+        cleanup_orphaned_mei_dirs()
     except Exception:
         pass
 
@@ -368,7 +393,18 @@ def main():
     window = MainWindow(ctx)
     window.show()
 
-    sys.exit(app.exec())
+    ret = app.exec()
+
+    # Clean up before process terminates
+    try:
+        ctx.close_db()
+    except Exception:
+        pass
+
+    import gc
+    gc.collect()
+
+    sys.exit(ret)
 
 
 if __name__ == "__main__":
